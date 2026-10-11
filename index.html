@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LED Matrix Speed & Media Display</title>
+  <title>Backpack HUD</title>
   <style>
     :root {
       --bg: #0d1117;
@@ -55,15 +55,16 @@
     }
     .btn {
       width: 100%;
-      padding: 12px;
+      padding: 14px;
       border-radius: 6px;
       border: none;
       font-size: 1rem;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
       margin-top: 8px;
       background: var(--accent);
       color: #000;
+      touch-action: manipulation;
     }
     .btn:disabled {
       background: #30363d;
@@ -74,111 +75,242 @@
       background: var(--danger);
       color: #fff;
     }
-    .field {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      margin-top: 8px;
-    }
-    label {
-      font-size: 0.75rem;
-      color: var(--text-dim);
-      text-transform: uppercase;
-    }
-    input {
-      background: #0d1117;
-      border: 1px solid #30363d;
-      border-radius: 4px;
-      padding: 8px;
-      color: var(--text);
-      font-size: 0.9rem;
-    }
     .status {
       font-size: 0.85rem;
       color: var(--text-dim);
       margin-top: 4px;
       text-align: center;
+      word-break: break-all;
+    }
+    #debugLog {
+      background: #000;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 8px;
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: #a5d6ff;
+      height: 100px;
+      overflow-y: auto;
+      white-space: pre-wrap;
     }
   </style>
 </head>
 <body>
 
-  <h1>Backpack HUD Controller</h1>
+  <h1>Backpack HUD</h1>
 
   <div class="card preview-box">
     <canvas id="matrix" width="64" height="64"></canvas>
-    <div id="status" class="status">Disconnected</div>
+    <div id="status" class="status">Ready to connect</div>
   </div>
 
   <div class="card">
-    <button id="connectBtn" class="btn">Connect Backpack (BLE)</button>
-    <button id="toggleGpsBtn" class="btn" disabled>Start GPS Speedometer</button>
+    <button id="connectBtn" class="btn" type="button">Connect Backpack (BLE)</button>
+    <button id="toggleGpsBtn" class="btn" type="button" disabled>Start GPS Speedometer</button>
   </div>
 
   <div class="card">
-    <div class="field">
-      <label for="trackInput">Now Playing Display</label>
-      <input type="text" id="trackInput" placeholder="Artist - Track Title" value="Daft Punk - Technologic">
-    </div>
+    <div style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 4px;">Live Event Log:</div>
+    <div id="debugLog">Initializing...</div>
   </div>
 
   <script>
     const SERVICE_UUID = '0000e031-0000-1000-8000-00805f9b34fb';
     const WRITE_CHAR_UUID = '0000a031-0000-1000-8000-00805f9b34fb';
 
+    const logBox = document.getElementById('debugLog');
+    const statusEl = document.getElementById('status');
+    const connectBtn = document.getElementById('connectBtn');
+    const toggleGpsBtn = document.getElementById('toggleGpsBtn');
+    const canvas = document.getElementById('matrix');
+    const ctx = canvas.getContext('2d');
+
+    function log(msg) {
+      console.log(msg);
+      logBox.textContent += '\n> ' + msg;
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+
     let bleDevice = null;
     let writeChar = null;
     let gpsWatchId = null;
     let currentSpeedMph = 0;
-    let textScrollOffset = 0;
     let isSending = false;
 
-    const canvas = document.getElementById('matrix');
-    const ctx = canvas.getContext('2d');
-    const statusEl = document.getElementById('status');
-    const connectBtn = document.getElementById('connectBtn');
-    const toggleGpsBtn = document.getElementById('toggleGpsBtn');
-    const trackInput = document.getElementById('trackInput');
+    // Check Web Bluetooth support on load
+    if (!navigator.bluetooth) {
+      log('ERROR: navigator.bluetooth not supported in this browser. Ensure you are using Bluefy or WebBLE.');
+      statusEl.textContent = 'Web Bluetooth Unavailable';
+      connectBtn.disabled = true;
+    } else {
+      log('Web Bluetooth detected successfully.');
+    }
 
     function renderFrame() {
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, 64, 64);
 
-      // Top: Speedometer
+      // Speed
       ctx.fillStyle = '#00FF66';
-      ctx.font = 'bold 24px monospace';
+      ctx.font = 'bold 26px monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(Math.round(currentSpeedMph).toString(), 32, 20);
+      ctx.fillText(Math.round(currentSpeedMph).toString(), 32, 22);
 
-      // Units
       ctx.fillStyle = '#888888';
       ctx.font = '8px monospace';
-      ctx.fillText('MPH', 32, 34);
+      ctx.fillText('MPH', 32, 38);
 
-      // Divider Line
+      // Divider
       ctx.strokeStyle = '#222222';
-      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(4, 40);
-      ctx.lineTo(60, 40);
+      ctx.moveTo(6, 44);
+      ctx.lineTo(58, 44);
       ctx.stroke();
 
-      // Bottom: Media Scroll Marquee
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(0, 42, 64, 22);
-      ctx.clip();
-
+      // Status
       ctx.fillStyle = '#38bdf8';
       ctx.font = '9px monospace';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
+      ctx.fillText('ACTIVE', 32, 54);
+    }
 
-      const trackText = trackInput.value || 'Idle';
-      const textWidth = ctx.measureText(trackText).width;
+    async function transmitCanvas() {
+      if (!writeChar || isSending) return;
+      isSending = true;
 
-      ctx.fillText(trackText, 64 - textScrollOffset, 48);
+      try {
+        const imgData = ctx.getImageData(0, 0, 64, 64).data;
+        const totalPixels = 64 * 64;
+        const buffer = new Uint8Array(totalPixels * 2);
 
-      textScrollOffset += 3;
-      if (text
+        for (let i = 0; i < totalPixels; i++) {
+          const r = imgData[i * 4];
+          const g = imgData[i * 4 + 1];
+          const b = imgData[i * 4 + 2];
+
+          const r5 = (r >> 3) & 0x1F;
+          const g6 = (g >> 2) & 0x3F;
+          const b5 = (b >> 3) & 0x1F;
+          const rgb565 = (r5 << 11) | (g6 << 5) | b5;
+
+          buffer[i * 2] = (rgb565 >> 8) & 0xFF;
+          buffer[i * 2 + 1] = rgb565 & 0xFF;
+        }
+
+        const PAYLOAD_PER_PACKET = 128;
+        const totalChunks = Math.ceil(buffer.length / PAYLOAD_PER_PACKET);
+
+        for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+          const start = chunkIdx * PAYLOAD_PER_PACKET;
+          const end = Math.min(start + PAYLOAD_PER_PACKET, buffer.length);
+          const slice = buffer.slice(start, end);
+
+          const packet = new Uint8Array(slice.length + 4);
+          packet[0] = 0x02;
+          packet[1] = chunkIdx;
+          packet[2] = totalChunks;
+          packet.set(slice, 3);
+
+          let sum = 0;
+          for (let j = 0; j < packet.length - 1; j++) sum += packet[j];
+          packet[packet.length - 1] = sum & 0xFF;
+
+          if (writeChar.properties.writeWithoutResponse) {
+            await writeChar.writeValueWithoutResponse(packet);
+          } else {
+            await writeChar.writeValue(packet);
+          }
+          await new Promise(r => setTimeout(r, 15));
+        }
+      } catch (err) {
+        log('Tx Error: ' + err.message);
+      } finally {
+        isSending = false;
+      }
+    }
+
+    async function handleConnectClick() {
+      log('Connect clicked.');
+      if (bleDevice && bleDevice.gatt.connected) {
+        log('Disconnecting...');
+        bleDevice.gatt.disconnect();
+        return;
+      }
+
+      try {
+        statusEl.textContent = 'Opening device picker...';
+        log('Requesting Bluetooth device...');
+
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: 'P031' }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        log('Device chosen: ' + bleDevice.name);
+        statusEl.textContent = 'Connecting GATT...';
+
+        const server = await bleDevice.gatt.connect();
+        log('Connected to GATT Server.');
+
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        log('Located service E031.');
+
+        writeChar = await service.getCharacteristic(WRITE_CHAR_UUID);
+        log('Located characteristic A031.');
+
+        statusEl.textContent = 'Connected: ' + bleDevice.name;
+        connectBtn.textContent = 'Disconnect';
+        connectBtn.classList.add('btn-danger');
+        toggleGpsBtn.disabled = false;
+
+        bleDevice.addEventListener('gattserverdisconnected', () => {
+          log('Device disconnected.');
+          statusEl.textContent = 'Disconnected';
+          connectBtn.textContent = 'Connect Backpack (BLE)';
+          connectBtn.classList.remove('btn-danger');
+          toggleGpsBtn.disabled = true;
+          writeChar = null;
+        });
+
+      } catch (err) {
+        log('Connect Failure: ' + err.message);
+        statusEl.textContent = 'Failed: ' + err.message;
+      }
+    }
+
+    // Direct event assignment
+    connectBtn.onclick = handleConnectClick;
+
+    toggleGpsBtn.onclick = () => {
+      if (gpsWatchId) {
+        navigator.geolocation.clearWatch(gpsWatchId);
+        gpsWatchId = null;
+        toggleGpsBtn.textContent = 'Start GPS Speedometer';
+        currentSpeedMph = 0;
+        log('GPS stopped.');
+      } else {
+        log('Starting GPS...');
+        gpsWatchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            const mps = pos.coords.speed;
+            currentSpeedMph = (mps !== null && mps >= 0) ? mps * 2.23694 : 0;
+          },
+          (err) => log('GPS Error: ' + err.message),
+          { enableHighAccuracy: true, maximumAge: 500, timeout: 5000 }
+        );
+        toggleGpsBtn.textContent = 'Stop GPS Speedometer';
+      }
+    };
+
+    // Render loop
+    renderFrame();
+    setInterval(() => {
+      renderFrame();
+      if (writeChar) {
+        transmitCanvas();
+      }
+    }, 1000);
+  </script>
+</body>
+</html>
