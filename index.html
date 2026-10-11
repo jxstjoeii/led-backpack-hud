@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LED Matrix Speed & Media Display</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card: #161b22;
+      --accent: #00ff66;
+      --text: #f0f6fc;
+      --text-dim: #8b949e;
+      --danger: #ff4d4f;
+    }
+    body {
+      margin: 0;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-sizing: border-box;
+    }
+    h1 {
+      font-size: 1.25rem;
+      margin-bottom: 12px;
+      color: var(--accent);
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px;
+      width: 100%;
+      max-width: 360px;
+      box-sizing: border-box;
+      margin-bottom: 12px;
+    }
+    .preview-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    canvas {
+      width: 192px;
+      height: 192px;
+      background: #000;
+      border: 2px solid #30363d;
+      border-radius: 6px;
+      image-rendering: pixelated;
+    }
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border-radius: 6px;
+      border: none;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      background: var(--accent);
+      color: #000;
+    }
+    .btn:disabled {
+      background: #30363d;
+      color: var(--text-dim);
+      cursor: not-allowed;
+    }
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    label {
+      font-size: 0.75rem;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+    input {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 8px;
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+    .status {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      margin-top: 4px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Backpack HUD Controller</h1>
+
+  <div class="card preview-box">
+    <canvas id="matrix" width="64" height="64"></canvas>
+    <div id="status" class="status">Disconnected</div>
+  </div>
+
+  <div class="card">
+    <button id="connectBtn" class="btn">Connect Backpack (BLE)</button>
+    <button id="toggleGpsBtn" class="btn" disabled>Start GPS Speedometer</button>
+  </div>
+
+  <div class="card">
+    <div class="field">
+      <label for="trackInput">Now Playing Display</label>
+      <input type="text" id="trackInput" placeholder="Artist - Track Title" value="Daft Punk - Technologic">
+    </div>
+  </div>
+
+  <script>
+    // Backpack GATT Service & Characteristics for LOY / YSKJ Gen-2
+    const SERVICE_UUID = '0000e031-0000-1000-8000-00805f9b34fb';
+    const WRITE_CHAR_UUID = '0000a031-0000-1000-8000-00805f9b34fb';
+
+    let bleDevice = null;
+    let writeChar = null;
+    let gpsWatchId = null;
+    let currentSpeedMph = 0;
+    let textScrollOffset = 0;
+    let isTransmitting = false;
+
+    const canvas = document.getElementById('matrix');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const connectBtn = document.getElementById('connectBtn');
+    const toggleGpsBtn = document.getElementById('toggleGpsBtn');
+    const trackInput = document.getElementById('trackInput');
+
+    // Render 64x64 Frame: Top half Speedometer, Bottom half Marquee Text
+    function renderFrame() {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, 64, 64);
+
+      // Top: Speedometer
+      ctx.fillStyle = '#00FF66';
+      ctx.font = 'bold 24px monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(Math.round(currentSpeedMph).toString(), 32, 20);
+
+      // Units indicator
+      ctx.fillStyle = '#888888';
+      ctx.font = '8px monospace';
+      ctx.fillText('MPH', 32, 34);
+
+      // Divider Line
+      ctx.strokeStyle = '#222222';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(4, 40);
+      ctx.lineTo(60, 40);
+      ctx.stroke();
+
+      // Bottom: Media Scroll Marquee
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 42, 64, 22);
+      ctx.clip();
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = '9px monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+
+      const trackText = trackInput.value || 'Idle';
+      const textWidth = ctx.measureText(trackText).width;
+
+      ctx.fillText(trackText, 64 - textScrollOffset, 48);
+
+      textScrollOffset += 2;
+      if (textScrollOffset > textWidth + 64) {
+        textScrollOffset = 0;
+      }
+      ctx.restore();
+    }
+
+    // Packetize canvas pixels and transmit to Characteristic A031
+    async function transmitCanvas() {
+      if (!writeChar || isTransmitting) return;
+      isTransmitting = true;
+
+      try {
+        const imgData = ctx.getImageData(0, 0, 64, 64).data;
+        const totalPixels = 64 * 64;
+        
+        // Convert RGBA buffer to RGB565 (16-bit per pixel)
+        const rgb565Buffer = new Uint8Array(totalPixels * 2);
+        for (let i = 0; i < totalPixels; i++) {
+          const r = imgData[i * 4];
+          const g = imgData[i * 4 + 1];
+          const b = imgData[i * 4 + 2];
+
+          const r5 = (r >> 3) & 0x1F;
+          const g6 = (g >> 2) & 0x3F;
+          const b5 = (b >> 3) & 0x1F;
+          const rgb = (r5 << 11) | (g6 << 5) | b5;
+
+          rgb565Buffer[i * 2] = (rgb >> 8) & 0xFF;
+          rgb565Buffer[i * 2 + 1] = rgb & 0xFF;
+        }
+
+        // Chunk transmission to match standard BLE MTU payload size (200-byte blocks)
+        const CHUNK_SIZE = 200;
+        for (let offset = 0; offset < rgb565Buffer.length; offset += CHUNK_SIZE) {
+          const slice = rgb565Buffer.slice(offset, offset + CHUNK_SIZE);
+          await writeChar.writeValueWithoutResponse(slice);
+          // 10ms micro-pause to avoid peripheral buffer saturation
+          await new Promise(r => setTimeout(r, 10));
+        }
+      } catch (err) {
+        console.warn('Frame transmission dropped:', err);
+      } finally {
+        isTransmitting = false;
+      }
+    }
+
+    // Web Bluetooth Connection Setup
+    connectBtn.addEventListener('click', async () => {
+      try {
+        statusEl.textContent = 'Scanning for P031...';
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [
+            { namePrefix: 'P031' }
+          ],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        statusEl.textContent = 'Connecting...';
+        const server = await bleDevice.gatt.connect();
+
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        writeChar = await service.getCharacteristic(WRITE_CHAR_UUID);
+
+        statusEl.textContent = 'Connected: ' + bleDevice.name;
+        connectBtn.textContent = 'Disconnect';
+        connectBtn.classList.add('btn-danger');
+        toggleGpsBtn.disabled = false;
+
+        bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+      } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+        console.error(err);
+      }
+    });
+
+    function onDisconnected() {
+      statusEl.textContent = 'Disconnected';
+      connectBtn.textContent = 'Connect Backpack (BLE)';
+      connectBtn.classList.remove('btn-danger');
+      toggleGpsBtn.disabled = true;
+      if (gpsWatchId) toggleGps();
+      writeChar = null;
+    }
+
+    // Geolocation Speed Tracking
+    function toggleGps() {
+      if (gpsWatchId) {
+        navigator.geolocation.clearWatch(gpsWatchId);
+        gpsWatchId = null;
+        toggleGpsBtn.textContent = 'Start GPS Speedometer';
+        currentSpeedMph = 0;
+      } else {
+        if (!('geolocation' in navigator)) {
+          alert('Geolocation not supported on this browser.');
+          return;
+        }
+        gpsWatchId = navigator.geolocation.watchPosition(
+          (pos) => {
+            const speedMps = pos.coords.speed;
+            if (speedMps !== null && !isNaN(speedMps) && speedMps >= 0) {
+              currentSpeedMph = speedMps * 2.23694; // m/s to mph
+            } else {
+              currentSpeedMph = 0;
+            }
+          },
+          (err) => console.warn('GPS Error:', err.message),
+          { enableHighAccuracy: true, maximumAge: 500, timeout: 5000 }
+        );
+        toggleGpsBtn.textContent = 'Stop GPS Speedometer';
+      }
+    }
+
+    toggleGpsBtn.addEventListener('click', toggleGps);
+
+    // Continuous Frame Render & Stream Loop (1 Hz refresh rate)
+    setInterval(() => {
+      renderFrame();
+      if (writeChar) {
+        transmitCanvas();
+      }
+    }, 1000);
+  </script>
+</body>
+</html>
