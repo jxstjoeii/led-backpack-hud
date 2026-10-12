@@ -32,7 +32,7 @@
       width: 100%;
       max-width: 320px;
       padding: 14px;
-      margin: 8px 0;
+      margin: 6px 0;
       font-size: 1rem;
       font-weight: bold;
       border: none;
@@ -44,6 +44,10 @@
     .btn:disabled {
       background: #2b313a;
       color: #6e7681;
+    }
+    .btn-blue {
+      background: #38bdf8;
+      color: #000;
     }
     .btn-red {
       background: #ff4d4f;
@@ -64,7 +68,7 @@
     #log {
       width: 100%;
       max-width: 320px;
-      height: 100px;
+      height: 110px;
       background: #000;
       border: 1px solid #30363d;
       border-radius: 4px;
@@ -83,17 +87,17 @@
 
   <h2>YSKJ Backpack HUD</h2>
 
-  <canvas id="matrix" width="64" height="64"></canvas>
+  <canvas id="matrix" width="32" height="32"></canvas>
 
   <button id="connectBtn" class="btn">Connect Backpack (BLE)</button>
+  <button id="testBtn" class="btn btn-blue" disabled>Send Test (Solid Green)</button>
   <button id="gpsBtn" class="btn" disabled>Start GPS Speedometer</button>
 
   <input type="text" id="trackInput" value="Daft Punk - Technologic" placeholder="Track Name">
 
-  <div id="log">Ready to connect to YS device.</div>
+  <div id="log">Ready to pair with YS device.</div>
 
   <script>
-    // Exact YSKJ Service and Characteristic UUIDs from nRF Connect
     const SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
     const WRITE_CHAR_UUID = '0000fff2-0000-1000-8000-00805f9b34fb';
 
@@ -101,6 +105,7 @@
     const ctx = canvas.getContext('2d');
     const logEl = document.getElementById('log');
     const connectBtn = document.getElementById('connectBtn');
+    const testBtn = document.getElementById('testBtn');
     const gpsBtn = document.getElementById('gpsBtn');
     const trackInput = document.getElementById('trackInput');
 
@@ -116,98 +121,140 @@
       logEl.scrollTop = logEl.scrollHeight;
     }
 
-    // Canvas Preview Loop
+    // 32x32 HUD Canvas
     function drawHUD() {
       ctx.fillStyle = '#000000';
-      ctx.fillRect(0, 0, 64, 64);
+      ctx.fillRect(0, 0, 32, 32);
 
       // Speed Digits
       ctx.fillStyle = '#00FF66';
-      ctx.font = 'bold 24px monospace';
+      ctx.font = 'bold 14px monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(Math.round(currentSpeed).toString(), 32, 22);
+      ctx.fillText(Math.round(currentSpeed).toString(), 16, 12);
 
       // Units
       ctx.fillStyle = '#888888';
-      ctx.font = '8px monospace';
-      ctx.fillText('MPH', 32, 33);
+      ctx.font = '6px monospace';
+      ctx.fillText('MPH', 16, 18);
 
-      // Divider Line
+      // Divider
       ctx.strokeStyle = '#222222';
       ctx.beginPath();
-      ctx.moveTo(4, 40);
-      ctx.lineTo(60, 40);
+      ctx.moveTo(2, 21);
+      ctx.lineTo(30, 21);
       ctx.stroke();
 
-      // Music Text Scroll
+      // Track title scroll
       ctx.save();
       ctx.beginPath();
-      ctx.rect(0, 42, 64, 22);
+      ctx.rect(0, 22, 32, 10);
       ctx.clip();
       ctx.fillStyle = '#38bdf8';
-      ctx.font = '9px monospace';
+      ctx.font = '7px monospace';
       ctx.textAlign = 'left';
 
       const title = (trackInput.value || 'Ready').trim();
       const txtWidth = ctx.measureText(title).width;
-      ctx.fillText(title, 64 - scrollPos, 54);
+      ctx.fillText(title, 32 - scrollPos, 29);
       ctx.restore();
 
-      scrollPos += 2;
-      if (scrollPos > txtWidth + 64) scrollPos = 0;
+      scrollPos += 1;
+      if (scrollPos > txtWidth + 32) scrollPos = 0;
     }
 
     setInterval(drawHUD, 100);
 
-    // Build standard YSKJ AA 55 framed packet
-    async function sendYSKJImage() {
+    // Build raw minimal 32x32 GIF binary blob
+    function createMinimalGIF(rgbArray) {
+      // Header + Logical Screen Descriptor (32x32, 256 colors global table)
+      const header = [
+        0x47, 0x49, 0x46, 0x38, 0x39, 0x61, // GIF89a
+        0x20, 0x00, 0x20, 0x00,             // 32 x 32
+        0xF7, 0x00, 0x00                    // GCT flag, 256 colors
+      ];
+
+      // 256-color palette (Black + Color values)
+      const palette = [];
+      for (let i = 0; i < 256; i++) {
+        palette.push(i, i, i);
+      }
+
+      // Image Descriptor
+      const imageDesc = [
+        0x2C, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x20, 0x00, 0x00, // Image header
+        0x08 // LZW Minimum Code Size
+      ];
+
+      // Raster blocks
+      const rasterData = [];
+      for (let i = 0; i < 1024; i++) {
+        rasterData.push(rgbArray[i] || 0x00);
+      }
+
+      const blocks = [];
+      for (let i = 0; i < rasterData.length; i += 254) {
+        const chunk = rasterData.slice(i, i + 254);
+        blocks.push(chunk.length, ...chunk);
+      }
+      blocks.push(0x00, 0x3B); // Block terminator + GIF trailer
+
+      return new Uint8Array([...header, ...palette, ...imageDesc, ...blocks]);
+    }
+
+    // Packetize using the AA 55 FF FF protocol envelope
+    async function transmitPayload(payload) {
       if (!writeChar || isTransmitting) return;
       isTransmitting = true;
 
       try {
-        const img = ctx.getImageData(0, 0, 64, 64).data;
-        const totalPixels = 64 * 64;
-        
-        // Convert to RGB565 format expected by LOY panels
-        const rgb565 = new Uint8Array(totalPixels * 2);
-        for (let i = 0; i < totalPixels; i++) {
-          const r = img[i * 4] >> 3;
-          const g = img[i * 4 + 1] >> 2;
-          const b = img[i * 4 + 2] >> 3;
-          const val = (r << 11) | (g << 5) | b;
-          rgb565[i * 2] = (val >> 8) & 0xFF;
-          rgb565[i * 2 + 1] = val & 0xFF;
+        const CHUNK_SIZE = 196;
+        const totalChunks = Math.ceil(payload.length / CHUNK_SIZE);
+
+        for (let idx = 0; idx < totalChunks; idx++) {
+          const start = idx * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, payload.length);
+          const chunkData = payload.slice(start, end);
+
+          // Header: AA 55 FF FF + [Index High, Low] + [Total High, Low] + Data + Checksum
+          const packet = new Uint8Array(chunkData.length + 9);
+          packet[0] = 0xAA;
+          packet[1] = 0x55;
+          packet[2] = 0xFF;
+          packet[3] = 0xFF;
+          packet[4] = (idx >> 8) & 0xFF;
+          packet[5] = idx & 0xFF;
+          packet[6] = (totalChunks >> 8) & 0xFF;
+          packet[7] = totalChunks & 0xFF;
+          packet.set(chunkData, 8);
+
+          // CheckSum8 Modulo
+          let csum = 0;
+          for (let j = 0; j < packet.length - 1; j++) {
+            csum = (csum + packet[j]) & 0xFF;
+          }
+          packet[packet.length - 1] = csum;
+
+          await writeChar.writeValueWithoutResponse(packet);
+          await new Promise(r => setTimeout(r, 12));
         }
-
-        // Full packet structure: AA 55 [Length High, Low] [Cmd 0x03] [RGB Data] [CRC]
-        const totalLen = rgb565.length + 6;
-        const packet = new Uint8Array(totalLen);
-        packet[0] = 0xAA;
-        packet[1] = 0x55;
-        packet[2] = (rgb565.length >> 8) & 0xFF;
-        packet[3] = rgb565.length & 0xFF;
-        packet[4] = 0x03; // Realtime Canvas Frame Command
-        packet.set(rgb565, 5);
-
-        let crc = 0;
-        for (let i = 0; i < packet.length - 1; i++) crc += packet[i];
-        packet[packet.length - 1] = crc & 0xFF;
-
-        // Stream across BLE in safe 20-byte chunks to characteristic FFF2
-        const CHUNK = 20;
-        for (let i = 0; i < packet.length; i += CHUNK) {
-          const slice = packet.slice(i, i + CHUNK);
-          await writeChar.writeValueWithoutResponse(slice);
-          await new Promise(r => setTimeout(r, 6));
-        }
-      } catch (err) {
-        print('Tx err: ' + err.message);
+        print('Upload completed.');
+      } catch (e) {
+        print('Tx err: ' + e.message);
       } finally {
         isTransmitting = false;
       }
     }
 
-    // Connect to YS device
+    // Solid Neon Green Test Button Action
+    testBtn.addEventListener('click', async () => {
+      print('Sending Solid Green Test Pattern...');
+      const solidGreenPixels = new Uint8Array(1024);
+      solidGreenPixels.fill(0x30); // Palette color index for bright green
+      const gifBytes = createMinimalGIF(solidGreenPixels);
+      await transmitPayload(gifBytes);
+    });
+
+    // Pair with YS Backpack
     connectBtn.addEventListener('click', async () => {
       print('Scanning for YS backpack...');
       if (!navigator.bluetooth) {
@@ -228,30 +275,27 @@
         const service = await server.getPrimaryService(SERVICE_UUID);
         writeChar = await service.getCharacteristic(WRITE_CHAR_UUID);
 
-        print('Connected to FFF2! Sync active.');
+        print('Connected! FFF2 ready.');
         connectBtn.textContent = 'Disconnect';
         connectBtn.classList.add('btn-red');
+        testBtn.disabled = false;
         gpsBtn.disabled = false;
 
         bleDevice.addEventListener('gattserverdisconnected', () => {
           print('Disconnected.');
           connectBtn.textContent = 'Connect Backpack (BLE)';
           connectBtn.classList.remove('btn-red');
+          testBtn.disabled = true;
           gpsBtn.disabled = true;
           writeChar = null;
         });
 
-        // Frame stream loop (1 update every second)
-        setInterval(() => {
-          if (writeChar) sendYSKJImage();
-        }, 1000);
-
       } catch (e) {
-        print('Error: ' + e.message);
+        print('Connect error: ' + e.message);
       }
     });
 
-    // Speedometer Tracking
+    // Speedometer
     gpsBtn.addEventListener('click', () => {
       if (gpsWatchId) {
         navigator.geolocation.clearWatch(gpsWatchId);
@@ -270,7 +314,7 @@
           { enableHighAccuracy: true, maximumAge: 500, timeout: 5000 }
         );
         gpsBtn.textContent = 'Stop GPS Speedometer';
-        print('GPS active.');
+        print('GPS tracking active.');
       }
     });
   </script>
