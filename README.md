@@ -16,7 +16,7 @@ Then on the phone open `http://<this-pc>:8080/` (Chrome treats that as a secure-
 - GPS turns the speed number into miles per hour.
 - Replace Saved GIF uploads a real GIF file and leaves it looping. That deletes other clips stored on the panel, including the cat. Connecting the LOY SPACE app can copy the cat back.
 
-The live mirror covers the saved clip while the page is connected. The panel ignores color 0,0,0 while a clip is playing, so each frame fills the matrix with a dim green first, then draws the HUD. Disconnecting stops that mirror and the saved clip shows again.
+The live mirror uses the same exclusive-draw command as Nyan Gear. On connect the page asks which program is playing, sends draw-begin (tag `30`, value `90`), and wipes the matrix to black. The saved clip stops compositing, and the HUD is drawn on that black. Disconnect sends draw-commit (value `65`) and plays that program again. A dim fill does not hide the clip, because the stored animation keeps drawing until draw-begin.
 
 ## Protocol
 
@@ -28,7 +28,7 @@ AA 55 FF FF | length u16le | sno u16le | flags C1 | cmd | payload | sum u16le
 
 `length` counts everything after the 4-byte header except itself (sno through the checksum). `cmd` is `2` for a command and `3` for a query. The checksum is the uint16 sum of every preceding byte.
 
-Live frames are `rt_draw` commands: one dim-green rectangle (`0, 16, 8`), then four 64×16 green strips for the lit pixels. A full 64×64 bitmap does not fit in one write. Strips stay small enough for a 247-byte phone MTU.
+Live frames are `rt_draw` bitmaps. Draw-begin is payload `30 01 90` and draw-commit is `30 01 65`, both command type 2. After draw-begin, a black 1-bit bitmap (every bit set, color `0,0,0`) clears the panel. Each HUD frame then sends the dark pixels in black and the lit pixels in green, in 64×16 strips. A full 64×64 bitmap does not fit in one write. Strips stay small enough for a 247-byte phone MTU. The playing program is read with query `36 00` and restored with play-single, tag `36`, mode `1`, plus program ids 1 through 59.
 
 A stored GIF is a program upload, not a raw file write:
 

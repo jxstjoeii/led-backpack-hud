@@ -94,29 +94,91 @@ const YSKJ = (() => {
     return out;
   }
 
-  // Color 0,0,0 is ignored while a stored clip is playing, so a black
-  // mask leaves that clip visible. A non-zero fill covers it, the same way
-  // Flash Green does. This dim green is the stand-in for black.
-  const COVER = [0, 16, 8];
+  // Exclusive draw, from the Nyan Gear live-speed path. drawBegin stops the
+  // stored-program renderer. drawCommit ends that mode. Until drawBegin,
+  // color 0,0,0 is ignored and the saved clip keeps compositing underneath.
+  function drawBegin() {
+    return new Uint8Array([0x30, 0x01, 0x90]);
+  }
 
-  // One dim full-panel fill, then the lit pixels in 64x16 strips.
-  // Strips stay under a 247-byte phone MTU.
+  function drawCommit() {
+    return new Uint8Array([0x30, 0x01, 0x65]);
+  }
+
+  // Query which program is playing. Reply payload is tag 0x36, a length,
+  // then mode, slot, and the id list. Slot is 0..59.
+  function playQuery() {
+    return new Uint8Array([0x36, 0x00]);
+  }
+
+  function parsePlay(payload) {
+    if (!payload || payload.length < 4 || payload[0] !== 0x36) return null;
+    let at = 1;
+    let len = payload[1];
+    if (len < 128) {
+      at = 2;
+    } else if (len === 0x81 && payload.length >= 3) {
+      len = payload[2];
+      at = 3;
+    } else {
+      return null;
+    }
+    if (len < 2 || payload.length < at + 2) return null;
+    const mode = payload[at];
+    const slot = payload[at + 1];
+    if (slot > 59 || mode > 2) return null;
+    return { mode, slot };
+  }
+
+  // playSingle body: tag 0x36, length 62, mode 1, slot, 0, then ids 1..59.
+  function playSingle(slot) {
+    const body = [0x36, 0x3e, 0x01, slot & 0xff, 0x00];
+    for (let id = 1; id <= 59; id++) body.push(id);
+    return new Uint8Array(body);
+  }
+
+  // Full-panel black, banded so each write fits a 247-byte phone MTU.
+  // Every bit is set and the color is 0,0,0. Send this after drawBegin.
+  function clearPackets() {
+    const rowBytes = PANEL / 8;
+    const bits = new Uint8Array(rowBytes * STRIP_H);
+    bits.fill(0xff);
+    const packets = [];
+    for (let y0 = 0; y0 < PANEL; y0 += STRIP_H) {
+      packets.push(aa55(bitmapPayload(bits, 0, y0, PANEL - 1, y0 + STRIP_H - 1, 0, 0, 0)));
+    }
+    return packets;
+  }
+
+  // Dark pixels in black, lit pixels in the HUD color. Both are 64x16
+  // strips. Repainting the dark pixels each frame clears trails left by
+  // the scrolling title.
   function framePackets(imageData, color = [0, 255, 102]) {
     const [r, g, b] = color;
     const px = imageData.data;
-    const packets = [aa55(fillRect(0, 0, PANEL - 1, PANEL - 1, COVER[0], COVER[1], COVER[2]))];
+    const packets = [];
     const rowBytes = PANEL / 8;
     for (let y0 = 0; y0 < PANEL; y0 += STRIP_H) {
       const lit = new Uint8Array(rowBytes * STRIP_H);
+      const dark = new Uint8Array(rowBytes * STRIP_H);
+      let litCount = 0;
+      let darkCount = 0;
       for (let y = 0; y < STRIP_H; y++) {
         for (let x = 0; x < PANEL; x++) {
           const i = ((y0 + y) * PANEL + x) * 4;
+          const mask = 1 << (7 - (x & 7));
+          const byte = y * rowBytes + (x >> 3);
           if (px[i] + px[i + 1] + px[i + 2] > 48) {
-            lit[y * rowBytes + (x >> 3)] |= 1 << (7 - (x & 7));
+            lit[byte] |= mask;
+            litCount++;
+          } else {
+            dark[byte] |= mask;
+            darkCount++;
           }
         }
       }
-      packets.push(aa55(bitmapPayload(lit, 0, y0, PANEL - 1, y0 + STRIP_H - 1, r, g, b)));
+      if (darkCount) packets.push(aa55(bitmapPayload(dark, 0, y0, PANEL - 1, y0 + STRIP_H - 1, 0, 0, 0)));
+      if (litCount) packets.push(aa55(bitmapPayload(lit, 0, y0, PANEL - 1, y0 + STRIP_H - 1, r, g, b)));
     }
     return packets;
   }
@@ -202,6 +264,12 @@ const YSKJ = (() => {
     aa55,
     parseNotify,
     fillRect,
+    drawBegin,
+    drawCommit,
+    playQuery,
+    parsePlay,
+    playSingle,
+    clearPackets,
     framePackets,
     deleteAll,
     powerOn,

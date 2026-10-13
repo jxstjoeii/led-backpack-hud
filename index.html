@@ -104,7 +104,7 @@
 <body>
 
   <h2>YSKJ Backpack HUD</h2>
-  <p class="note">64×64 live mirror. While this page is connected the panel is dim green with the HUD on top, so the saved clip stays hidden. Disconnect and that clip plays again.</p>
+  <p class="note">64×64 live mirror. Connecting takes the panel off the saved clip and draws the HUD on black. Disconnect hands that clip back.</p>
 
   <canvas id="matrix" width="64" height="64"></canvas>
   <div id="readout">0 MPH</div>
@@ -120,7 +120,7 @@
 
   <div id="log">Ready to pair with a YS backpack.</div>
 
-  <script src="yskj.js"></script>
+  <script src="yskj.js?v=3"></script>
   <script>
     const SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
     const WRITE_UUID = '0000fff2-0000-1000-8000-00805f9b34fb';
@@ -189,8 +189,11 @@
     let currentSpeed = 0;
     let scrollPos = 0;
     let mirrorToken = 0;
+    let mirrorDone = Promise.resolve();
     let solidUntil = 0;
     let uploading = false;
+    let savedSlot = null;
+    let releasing = false;
     const pending = new Map();
 
     function print(msg) {
@@ -265,6 +268,10 @@
         wait(parsed);
       }
       if (parsed.text.length > 8) print(parsed.text);
+      if (savedSlot === null && !releasing) {
+        const play = YSKJ.parsePlay(parsed.payload);
+        if (play) savedSlot = play.slot;
+      }
     }
 
     async function writeRaw(packet) {
@@ -291,15 +298,15 @@
       });
     }
 
-    async function pushFrame() {
-      if (!writeChar) return;
+    async function pushFrame(token) {
+      if (!writeChar || mirrorToken !== token) return;
       if (Date.now() < solidUntil) {
         await writeRaw(YSKJ.aa55(YSKJ.fillRect(0, 0, 63, 63, 0, 255, 60)));
         return;
       }
       const packets = YSKJ.framePackets(ctx.getImageData(0, 0, 64, 64));
       for (const packet of packets) {
-        if (!writeChar) return;
+        if (!writeChar || mirrorToken !== token) return;
         await writeRaw(packet);
       }
     }
@@ -307,7 +314,7 @@
     async function mirrorLoop(token) {
       while (mirrorToken === token && writeChar && !uploading) {
         try {
-          await pushFrame();
+          await pushFrame(token);
         } catch (e) {
           print('Panel write failed: ' + e.message);
           return;
@@ -318,11 +325,58 @@
 
     function startMirror() {
       mirrorToken += 1;
-      mirrorLoop(mirrorToken);
+      mirrorDone = mirrorLoop(mirrorToken);
     }
 
     function stopMirror() {
       mirrorToken += 1;
+    }
+
+    // Ask which program is on screen, then take exclusive draw and wipe
+    // the panel to black. The slot is replayed on disconnect.
+    async function takePanel() {
+      savedSlot = null;
+      try {
+        const reply = await writeWait(YSKJ.aa55(YSKJ.playQuery(), 3));
+        const play = YSKJ.parsePlay(reply.payload);
+        if (play) savedSlot = play.slot;
+      } catch (e) {
+        // The query timed out. A play-state notify may still have filled savedSlot.
+      }
+      if (savedSlot !== null) print('Saved clip is slot ' + savedSlot + '.');
+      else print('The panel did not name the playing clip.');
+      await writeWait(YSKJ.aa55(YSKJ.drawBegin()));
+      try {
+        for (const packet of YSKJ.clearPackets()) {
+          if (!writeChar) return;
+          await writeWait(packet);
+        }
+      } catch (e) {
+        print('Black clear failed: ' + e.message);
+      }
+    }
+
+    // Leave exclusive draw and start the clip that was playing at connect.
+    async function releasePanel() {
+      if (releasing) return;
+      releasing = true;
+      const slot = savedSlot;
+      savedSlot = null;
+      stopMirror();
+      try {
+        await mirrorDone;
+      } catch (e) {
+        // The mirror loop already reported the write error.
+      }
+      if (writeChar) {
+        try {
+          await writeWait(YSKJ.aa55(YSKJ.drawCommit()));
+          if (slot !== null) await writeWait(YSKJ.aa55(YSKJ.playSingle(slot)));
+        } catch (e) {
+          print('Could not hand the panel back: ' + e.message);
+        }
+      }
+      releasing = false;
     }
 
     function setLinked(on) {
@@ -341,7 +395,13 @@
 
     connectBtn.addEventListener('click', async () => {
       if (bleDevice && bleDevice.gatt.connected) {
-        bleDevice.gatt.disconnect();
+        connectBtn.disabled = true;
+        await releasePanel();
+        try {
+          bleDevice.gatt.disconnect();
+        } catch (e) {
+          connectBtn.disabled = false;
+        }
         return;
       }
       if (!navigator.bluetooth) {
@@ -356,6 +416,18 @@
         });
         print('Found ' + bleDevice.name + '. Connecting...');
         const server = await bleDevice.gatt.connect();
+        bleDevice.addEventListener('gattserverdisconnected', () => {
+          stopMirror();
+          writeChar = null;
+          pending.clear();
+          savedSlot = null;
+          releasing = false;
+          connectBtn.disabled = false;
+          connectBtn.textContent = 'Connect Backpack (BLE)';
+          connectBtn.classList.remove('btn-red');
+          setLinked(false);
+          print('Disconnected.');
+        }, { once: true });
         const service = await server.getPrimaryService(SERVICE_UUID);
         writeChar = await service.getCharacteristic(WRITE_UUID);
         const notifyChar = await service.getCharacteristic(NOTIFY_UUID);
@@ -366,24 +438,20 @@
         await writeWait(YSKJ.aa55(YSKJ.powerOn()));
         await writeWait(YSKJ.aa55(YSKJ.brightness(15)));
         await writeWait(YSKJ.aa55(YSKJ.paramDev(), 3));
+        await takePanel();
 
         connectBtn.textContent = 'Disconnect';
         connectBtn.classList.add('btn-red');
         setLinked(true);
-        print('Connected. Mirroring the HUD.');
+        print('Connected. The saved clip is paused and the HUD is live.');
         startMirror();
-
-        bleDevice.addEventListener('gattserverdisconnected', () => {
-          stopMirror();
-          writeChar = null;
-          pending.clear();
-          connectBtn.textContent = 'Connect Backpack (BLE)';
-          connectBtn.classList.remove('btn-red');
-          setLinked(false);
-          print('Disconnected.');
-        }, { once: true });
       } catch (e) {
         print('Connect error: ' + e.message);
+        try {
+          if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();
+        } catch (err) {
+          connectBtn.disabled = false;
+        }
       }
     });
 
@@ -427,9 +495,21 @@
       );
       if (!ok) return;
 
+      let replaced = false;
       uploading = true;
       stopMirror();
-      await delay(80);
+      try {
+        await mirrorDone;
+      } catch (e) {
+        // The mirror loop already reported the write error.
+      }
+      if (writeChar) {
+        try {
+          await writeWait(YSKJ.aa55(YSKJ.drawCommit()));
+        } catch (e) {
+          print('Could not leave live draw: ' + e.message);
+        }
+      }
       try {
         if (size && (size.w !== 64 || size.h !== 64)) {
           print('This GIF is ' + size.w + '×' + size.h + '. The panel is 64×64.');
@@ -447,11 +527,20 @@
           }
         }
         print('Saved GIF is playing.');
+        replaced = true;
       } catch (e) {
         print('GIF upload failed: ' + e.message);
       } finally {
         uploading = false;
-        if (writeChar) startMirror();
+        if (writeChar) {
+          try {
+            await takePanel();
+            if (replaced && savedSlot === null) savedSlot = 0;
+            startMirror();
+          } catch (e) {
+            print('Live draw did not restart: ' + e.message);
+          }
+        }
       }
     });
   </script>
