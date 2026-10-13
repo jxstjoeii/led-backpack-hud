@@ -16,7 +16,7 @@ Then on the phone open `http://<this-pc>:8080/` (Chrome treats that as a secure-
 - GPS turns the speed number into miles per hour.
 - Replace Saved GIF uploads a real GIF file and leaves it looping. That deletes other clips stored on the panel, including the cat. Connecting the LOY SPACE app can copy the cat back.
 
-The live mirror covers the saved clip while the page is connected. A black rectangle does not hide a GIF that is still playing, and pixels left unset in a bitmap stay as they were, so every frame sends a black mask and then the green HUD. Disconnecting stops that mirror and the saved clip shows again.
+The live mirror covers the saved clip while the page is connected. The panel ignores color 0,0,0 while a clip is playing, so each frame fills the matrix with a dim green first, then draws the HUD. Disconnecting stops that mirror and the saved clip shows again.
 
 ## Protocol
 
@@ -28,7 +28,7 @@ AA 55 FF FF | length u16le | sno u16le | flags C1 | cmd | payload | sum u16le
 
 `length` counts everything after the 4-byte header except itself (sno through the checksum). `cmd` is `2` for a command and `3` for a query. The checksum is the uint16 sum of every preceding byte.
 
-Live frames are `rt_draw` bitmaps: eight 64×16 strips, a black mask and a green mask for each band. A full 64×64 bitmap does not fit in one write. Strips stay small enough for a 247-byte phone MTU.
+Live frames are `rt_draw` commands: one dim-green rectangle (`0, 16, 8`), then four 64×16 green strips for the lit pixels. A full 64×64 bitmap does not fit in one write. Strips stay small enough for a 247-byte phone MTU.
 
 A stored GIF is a program upload, not a raw file write:
 

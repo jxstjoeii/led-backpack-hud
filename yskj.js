@@ -94,31 +94,29 @@ const YSKJ = (() => {
     return out;
   }
 
-  // Two masks per strip. A black filled rectangle does not cover a GIF that
-  // is still playing, and unset bitmap bits leave the old pixels in place.
-  // Paint the dark pixels black, then the lit pixels green, in 64x16 strips
-  // so each packet stays under a 247-byte phone MTU.
+  // Color 0,0,0 is ignored while a stored clip is playing, so a black
+  // mask leaves that clip visible. A non-zero fill covers it, the same way
+  // Flash Green does. This dim green is the stand-in for black.
+  const COVER = [0, 16, 8];
+
+  // One dim full-panel fill, then the lit pixels in 64x16 strips.
+  // Strips stay under a 247-byte phone MTU.
   function framePackets(imageData, color = [0, 255, 102]) {
     const [r, g, b] = color;
     const px = imageData.data;
-    const packets = [];
+    const packets = [aa55(fillRect(0, 0, PANEL - 1, PANEL - 1, COVER[0], COVER[1], COVER[2]))];
     const rowBytes = PANEL / 8;
     for (let y0 = 0; y0 < PANEL; y0 += STRIP_H) {
       const lit = new Uint8Array(rowBytes * STRIP_H);
-      const dark = new Uint8Array(rowBytes * STRIP_H);
       for (let y = 0; y < STRIP_H; y++) {
         for (let x = 0; x < PANEL; x++) {
           const i = ((y0 + y) * PANEL + x) * 4;
-          const mask = 1 << (7 - (x & 7));
-          const at = y * rowBytes + (x >> 3);
-          if (px[i] + px[i + 1] + px[i + 2] > 48) lit[at] |= mask;
-          else dark[at] |= mask;
+          if (px[i] + px[i + 1] + px[i + 2] > 48) {
+            lit[y * rowBytes + (x >> 3)] |= 1 << (7 - (x & 7));
+          }
         }
       }
-      const x1 = PANEL - 1;
-      const y1 = y0 + STRIP_H - 1;
-      packets.push(aa55(bitmapPayload(dark, 0, y0, x1, y1, 0, 0, 0)));
-      packets.push(aa55(bitmapPayload(lit, 0, y0, x1, y1, r, g, b)));
+      packets.push(aa55(bitmapPayload(lit, 0, y0, PANEL - 1, y0 + STRIP_H - 1, r, g, b)));
     }
     return packets;
   }
