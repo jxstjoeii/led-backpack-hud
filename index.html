@@ -104,7 +104,7 @@
 <body>
 
   <h2>YSKJ Backpack HUD</h2>
-  <p class="note">64×64 live mirror. Connecting takes the panel off the saved clip and draws the HUD on black. Disconnect hands that clip back.</p>
+  <p class="note">64×64 live mirror. Connecting takes the panel off the saved clip and draws the HUD on black. The screen stays on while Bluefy is open. Disconnect hands that clip back.</p>
 
   <canvas id="matrix" width="64" height="64"></canvas>
   <div id="readout">0 MPH</div>
@@ -194,6 +194,7 @@
     let uploading = false;
     let savedSlot = null;
     let releasing = false;
+    let wakeLock = null;
     const pending = new Map();
 
     function print(msg) {
@@ -379,6 +380,35 @@
       releasing = false;
     }
 
+    // Ask during the connect tap. iOS drops the gesture if this waits
+    // until after the Bluetooth picker, and it releases the lock whenever
+    // Bluefy leaves the screen.
+    async function holdScreen() {
+      if (!navigator.wakeLock) return false;
+      try {
+        if (!wakeLock || wakeLock.released) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    async function letScreenSleep() {
+      if (!wakeLock) return;
+      try {
+        await wakeLock.release();
+      } catch (e) {
+        // The browser already released it when Bluefy went to the background.
+      }
+      wakeLock = null;
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && writeChar && wakeLock) holdScreen();
+    });
+
     function setLinked(on) {
       testBtn.disabled = !on;
       gpsBtn.disabled = !on;
@@ -396,6 +426,7 @@
     connectBtn.addEventListener('click', async () => {
       if (bleDevice && bleDevice.gatt.connected) {
         connectBtn.disabled = true;
+        await letScreenSleep();
         await releasePanel();
         try {
           bleDevice.gatt.disconnect();
@@ -408,6 +439,7 @@
         print('Web Bluetooth is not available in this browser.');
         return;
       }
+      await holdScreen();
       try {
         print('Scanning for a YS backpack...');
         bleDevice = await navigator.bluetooth.requestDevice({
@@ -422,6 +454,7 @@
           pending.clear();
           savedSlot = null;
           releasing = false;
+          letScreenSleep();
           connectBtn.disabled = false;
           connectBtn.textContent = 'Connect Backpack (BLE)';
           connectBtn.classList.remove('btn-red');
@@ -444,8 +477,11 @@
         connectBtn.classList.add('btn-red');
         setLinked(true);
         print('Connected. The saved clip is paused and the HUD is live.');
+        if (await holdScreen()) print('Screen stays on while Bluefy is open.');
+        else print('Could not keep the screen on. Set Auto-Lock to Never while you ride.');
         startMirror();
       } catch (e) {
+        await letScreenSleep();
         print('Connect error: ' + e.message);
         try {
           if (bleDevice && bleDevice.gatt.connected) bleDevice.gatt.disconnect();

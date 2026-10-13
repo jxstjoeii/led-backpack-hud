@@ -14,6 +14,7 @@ Then on the phone open `http://<this-pc>:8080/` (Chrome treats that as a secure-
 - Mirrors the 64×64 speed and track preview onto the panel while the page stays connected.
 - Flash Green lights the whole matrix for about a second.
 - GPS turns the speed number into miles per hour.
+- Keeps the phone screen on while the backpack is connected and Bluefy stays in front. Leaving the app still pauses the HUD.
 - Replace Saved GIF uploads a real GIF file and leaves it looping. That deletes other clips stored on the panel, including the cat. Connecting the LOY SPACE app can copy the cat back.
 
 The live mirror uses the same exclusive-draw command as Nyan Gear. On connect the page asks which program is playing, sends draw-begin (tag `30`, value `90`), and wipes the matrix to black. The saved clip stops compositing, and the HUD is drawn on that black. Disconnect sends draw-commit (value `65`) and plays that program again. A dim fill does not hide the clip, because the stored animation keeps drawing until draw-begin.
