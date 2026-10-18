@@ -14,7 +14,7 @@ Then on the phone open `http://<this-pc>:8080/` (Chrome treats that as a secure-
 - Mirrors the 64×64 speed and track preview onto the panel while the page stays connected.
 - Flash Green lights the whole matrix for about a second.
 - GPS turns the speed number into miles per hour.
-- Brake Light watches GPS on its own. While speed drops by a few miles per hour the panel flashes red, then the HUD returns. A speed reading the phone does not have is ignored, so a missing fix does not count as stopping.
+- Brake Light watches GPS on its own, and the phone's motion while you were just moving. Slowing down flashes the panel red for a few seconds, including a stop that GPS reports as already 0. A speed reading the phone does not have is ignored, so a missing fix does not count as stopping.
 - Keeps the phone screen on while the backpack is connected and Bluefy stays in front. Leaving the app still pauses the HUD.
 - Replace Saved GIF uploads a real GIF file and leaves it looping. That deletes other clips stored on the panel, including the cat. Connecting the LOY SPACE app can copy the cat back.
 

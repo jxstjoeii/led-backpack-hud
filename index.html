@@ -191,6 +191,11 @@
     let wantHudSpeed = false;
     let wantBrake = false;
     let braking = false;
+    let brakeUntil = 0;
+    let recentFastAt = 0;
+    let motionOn = false;
+    let motionHighSince = 0;
+    let grav = null;
     const speedTrail = [];
     let currentSpeed = 0;
     let scrollPos = 0;
@@ -305,22 +310,28 @@
       });
     }
 
-    // True while speed over the last two seconds is falling fast enough
-    // to count as braking. A null-speed GPS fix never gets here, so a
-    // missing fix cannot look like a stop. The middle band keeps the
-    // previous decision so one noisy sample does not flicker the light.
+    // True when the fastest sample in the last four seconds is well above
+    // the current one. A reading of 0 still counts: a hard stop often
+    // arrives as a single fix that is already stopped.
     function brakingFromTrail(trail, mph, now, was) {
       trail.push({ t: now, mph });
-      const horizon = now - 2000;
+      const horizon = now - 4000;
       while (trail.length && trail[0].t < horizon) trail.shift();
-      const first = trail[0];
-      const dt = (now - first.t) / 1000;
-      if (dt < 0.6) return was;
-      const drop = first.mph - mph;
+      if (trail.length < 2) return was;
+      let peak = trail[0].mph;
+      let peakAt = trail[0].t;
+      for (let i = 1; i < trail.length - 1; i++) {
+        if (trail[i].mph > peak) {
+          peak = trail[i].mph;
+          peakAt = trail[i].t;
+        }
+      }
+      const dt = (now - peakAt) / 1000;
+      if (dt < 0.4) return was;
+      const drop = peak - mph;
       const rate = drop / dt;
-      if (mph < 1.5) return false;
-      if (rate >= 3.5 && drop >= 3 && first.mph >= 6) return true;
-      if (rate <= 1) return false;
+      if (peak >= 6 && drop >= 4 && (mph <= 3 || rate >= 2)) return true;
+      if (rate <= 0.5 && drop < 2.5) return false;
       return was;
     }
 
@@ -330,8 +341,66 @@
       if (wantBrake) print(next ? 'Braking.' : 'Rolling.');
     }
 
+    function holdBrake() {
+      brakeUntil = Date.now() + 2500;
+      setBraking(true);
+    }
+
     function noteBrake(mph) {
-      setBraking(brakingFromTrail(speedTrail, mph, Date.now(), braking));
+      if (mph >= 5) recentFastAt = Date.now();
+      const detected = brakingFromTrail(speedTrail, mph, Date.now(), braking);
+      if (detected) holdBrake();
+      else setBraking(Date.now() < brakeUntil);
+    }
+
+    function linearAccel(e) {
+      const a = e.acceleration;
+      if (a && a.x !== null && a.y !== null && a.z !== null) {
+        return Math.hypot(a.x, a.y, a.z);
+      }
+      const g = e.accelerationIncludingGravity;
+      if (!g || g.x === null || g.y === null || g.z === null) return null;
+      if (!grav) {
+        grav = { x: g.x, y: g.y, z: g.z };
+        return 0;
+      }
+      grav.x = grav.x * 0.85 + g.x * 0.15;
+      grav.y = grav.y * 0.85 + g.y * 0.15;
+      grav.z = grav.z * 0.85 + g.z * 0.15;
+      return Math.hypot(g.x - grav.x, g.y - grav.y, g.z - grav.z);
+    }
+
+    function onMotion(e) {
+      if (!wantBrake) return;
+      const mag = linearAccel(e);
+      if (mag === null) return;
+      const now = Date.now();
+      if (mag >= 3.5) {
+        if (!motionHighSince) motionHighSince = now;
+        const held = now - motionHighSince >= 250;
+        const spike = mag >= 6 && now - motionHighSince >= 80;
+        if ((held || spike) && now - recentFastAt < 8000) holdBrake();
+      } else {
+        motionHighSince = 0;
+      }
+    }
+
+    async function enableMotion() {
+      if (motionOn) return;
+      try {
+        const motion = window.DeviceMotionEvent;
+        if (motion && typeof motion.requestPermission === 'function') {
+          const state = await motion.requestPermission();
+          if (state !== 'granted') {
+            print('Motion access is off, so the brake light follows GPS only.');
+            return;
+          }
+        }
+        window.addEventListener('devicemotion', onMotion);
+        motionOn = true;
+      } catch (e) {
+        print('Motion access is off, so the brake light follows GPS only.');
+      }
     }
 
     function ensureGeo() {
@@ -357,6 +426,7 @@
       navigator.geolocation.clearWatch(gpsWatchId);
       gpsWatchId = null;
       speedTrail.length = 0;
+      brakeUntil = 0;
       setBraking(false);
     }
 
@@ -367,6 +437,7 @@
 
     async function pushFrame(token) {
       if (!writeChar || mirrorToken !== token) return;
+      if (braking && Date.now() >= brakeUntil) setBraking(false);
       if (braking) {
         const bright = Math.floor(Date.now() / 220) % 2 === 0;
         const red = bright ? 255 : 12;
@@ -579,17 +650,22 @@
       print('GPS stopped.');
     });
 
-    brakeBtn.addEventListener('click', () => {
+    brakeBtn.addEventListener('click', async () => {
       wantBrake = !wantBrake;
       paintBrakeBtn();
       if (wantBrake) {
         speedTrail.length = 0;
+        brakeUntil = 0;
+        motionHighSince = 0;
         setBraking(false);
         ensureGeo();
-        print('Brake light armed. The panel flashes red when GPS speed drops.');
+        print('Brake light armed. It flashes red when you slow down.');
+        await enableMotion();
         return;
       }
       speedTrail.length = 0;
+      brakeUntil = 0;
+      motionHighSince = 0;
       setBraking(false);
       stopGeoIfIdle();
       print('Brake light off.');
