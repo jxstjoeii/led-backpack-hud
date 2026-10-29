@@ -8,10 +8,13 @@ python -m http.server 8080
 
 Then on the phone open `http://<this-pc>:8080/` (Chrome treats that as a secure-enough context only for localhost; for a phone, use Chrome’s Web Bluetooth on an `https://` host, or desktop Chrome at `http://localhost:8080/`).
 
+The folder is a static site. GitHub Pages, Netlify, and Cloudflare Pages can host it with no server. The phone build already used for Bluefy is `https://jxstjoeii.github.io/led-backpack-hud/`. The Spotify redirect URI has to be that exact address.
+
 ## What the page does
 
 - Connects to a backpack whose name starts with `YS`.
 - Mirrors the 64×64 speed and track preview onto the panel while the page stays connected.
+- Now playing follows Spotify. Create a free app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), add the page's redirect URI, add your account under User Management while the app is in development, and paste the Client ID into Setup. The page uses PKCE, so it does not need the client secret. A line you type stays until you tap Follow Spotify.
 - Flash Green lights the whole matrix for about a second.
 - GPS turns the speed number into miles per hour.
 - Brake Light watches GPS on its own, and the phone's motion while you were just moving. Slowing down flashes the panel red for a few seconds, including a stop that GPS reports as already 0. A speed reading the phone does not have is ignored, so a missing fix does not count as stopping.

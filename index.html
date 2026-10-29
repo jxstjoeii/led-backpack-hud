@@ -3,125 +3,347 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>YSKJ Backpack HUD</title>
+  <title>Backpack</title>
+  <meta name="theme-color" content="#090b10">
   <style>
+    :root {
+      color-scheme: dark;
+      --bg: #090b10;
+      --card: #141820;
+      --line: #2a3140;
+      --text: #f4f7fb;
+      --muted: #93a0b5;
+      --green: #3dff8a;
+      --green-ink: #04210f;
+      --blue: #7dd3fc;
+      --red: #ff5d63;
+    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 16px;
-      background: #0e1117;
-      color: #fff;
-      font-family: -apple-system, system-ui, sans-serif;
+      min-height: 100vh;
+      padding: max(18px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+      background:
+        radial-gradient(900px 420px at 50% -10%, rgba(61, 255, 138, 0.16), transparent 55%),
+        var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .app {
+      width: min(440px, 100%);
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    header > div:first-child { min-width: 0; flex: 1; }
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex: none;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.35rem;
+      letter-spacing: -0.03em;
+    }
+    header p {
+      margin: 2px 0 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .pill.on {
+      color: var(--green-ink);
+      background: var(--green);
+      border-color: var(--green);
+    }
+    .stage {
       display: flex;
       flex-direction: column;
       align-items: center;
-    }
-    h2 {
-      margin: 4px 0 2px;
-      font-size: 1.15rem;
-      color: #00ff66;
-    }
-    p.note {
-      margin: 0 0 12px;
-      max-width: 320px;
-      color: #8b949e;
-      font-size: 0.8rem;
-      text-align: center;
+      padding: 18px 16px 8px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 22px;
     }
     #matrix {
-      width: min(256px, 80vw);
-      height: min(256px, 80vw);
+      width: min(220px, 62vw);
+      height: min(220px, 62vw);
       background: #000;
-      border: 2px solid #30363d;
-      border-radius: 6px;
+      border-radius: 18px;
+      box-shadow: 0 0 0 8px #050608, 0 18px 50px rgba(0, 0, 0, 0.35);
       image-rendering: pixelated;
     }
     #readout {
-      margin: 8px 0 4px;
+      margin: 14px 0 4px;
+      font-size: 2.4rem;
+      font-weight: 760;
+      letter-spacing: -0.04em;
       font-variant-numeric: tabular-nums;
-      font-weight: bold;
-      color: #00ff66;
+      color: var(--green);
     }
+    .card {
+      margin-top: 14px;
+      padding: 14px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+    }
+    .card h2 {
+      margin: 0 0 10px;
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .now {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      min-height: 64px;
+    }
+    .art-slot {
+      width: 64px;
+      height: 64px;
+      border-radius: 12px;
+      background: #0c0e13;
+      flex: none;
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+      color: var(--muted);
+      font-size: 1.5rem;
+    }
+    #npArt {
+      width: 64px;
+      height: 64px;
+      object-fit: cover;
+      grid-area: 1 / 1;
+    }
+    #npArtMark { grid-area: 1 / 1; }
+    #npArt:not([hidden]) + #npArtMark { display: none; }
+    .now > div { min-width: 0; flex: 1; }
+    #npTitle {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #npArtist, #npStatus {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+    #npArtist {
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    #npStatus:empty { display: none; }
+    .row {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .row .btn { flex: 1; }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .span2 { grid-column: 1 / -1; }
     .btn {
       width: 100%;
-      max-width: 320px;
-      padding: 14px;
-      margin: 6px 0;
-      font-size: 1rem;
-      font-weight: bold;
+      margin: 0;
+      padding: 14px 10px;
       border: none;
-      border-radius: 6px;
-      background: #00ff66;
-      color: #000;
+      border-radius: 14px;
+      background: var(--green);
+      color: var(--green-ink);
+      font: inherit;
+      font-size: 0.98rem;
+      font-weight: 750;
       cursor: pointer;
-      box-sizing: border-box;
       text-align: center;
     }
     .btn:disabled {
-      background: #2b313a;
-      color: #6e7681;
+      background: #232833;
+      color: #6d7788;
     }
-    .btn-blue {
-      background: #38bdf8;
-      color: #000;
+    .btn-blue { background: var(--blue); color: #06202c; }
+    .btn-red { background: var(--red); color: white; }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--line);
     }
-    .btn-red {
-      background: #ff4d4f;
-      color: #fff;
+    label.field {
+      display: block;
+      margin: 12px 0 6px;
+      color: var(--muted);
+      font-size: 0.82rem;
     }
     input[type="text"] {
       width: 100%;
-      max-width: 320px;
-      padding: 12px;
-      margin-top: 6px;
-      background: #161b22;
-      border: 1px solid #30363d;
-      border-radius: 4px;
-      color: #fff;
-      font-size: 0.95rem;
-      box-sizing: border-box;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #0c0f15;
+      color: var(--text);
+      font: inherit;
+      font-size: 16px;
     }
-    #gifFile {
-      display: none;
+    #gifFile { display: none; }
+    #gifLabel.is-off {
+      background: #232833;
+      color: #6d7788;
+      pointer-events: none;
+    }
+    details {
+      margin-top: 14px;
+      color: var(--muted);
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--text);
     }
     #log {
-      width: 100%;
-      max-width: 320px;
-      height: 110px;
-      background: #000;
-      border: 1px solid #30363d;
-      border-radius: 4px;
-      padding: 8px;
-      margin-top: 10px;
-      font-family: monospace;
-      font-size: 0.75rem;
-      color: #58a6ff;
-      overflow-y: scroll;
+      height: 140px;
+      margin-top: 8px;
+      padding: 10px;
+      overflow: auto;
       white-space: pre-wrap;
-      box-sizing: border-box;
+      border-radius: 12px;
+      background: #07090d;
+      color: #9ec1ff;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.75rem;
+    }
+    dialog {
+      width: min(420px, calc(100% - 24px));
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #12161e;
+      color: var(--text);
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.62); }
+    dialog h3 { margin: 0 0 8px; }
+    dialog p, dialog ol { color: var(--muted); font-size: 0.9rem; }
+    dialog ol { padding-left: 1.1rem; }
+    .icon-btn {
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--text);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font: inherit;
+      font-weight: 700;
     }
   </style>
 </head>
 <body>
+  <main class="app">
+    <header>
+      <div>
+        <h1 id="deviceName">Backpack</h1>
+        <p>Speed, brake light, and the song on your phone.</p>
+      </div>
+      <div class="header-actions">
+        <span id="linkPill" class="pill">Off</span>
+        <button id="settingsBtn" class="icon-btn" type="button">Setup</button>
+      </div>
+    </header>
 
-  <h2>YSKJ Backpack HUD</h2>
-  <p class="note">64×64 live mirror. Connecting takes the panel off the saved clip and draws the HUD on black. The screen stays on while Bluefy is open. Disconnect hands that clip back.</p>
+    <section class="stage">
+      <canvas id="matrix" width="64" height="64"></canvas>
+      <div id="readout">0 MPH</div>
+    </section>
 
-  <canvas id="matrix" width="64" height="64"></canvas>
-  <div id="readout">0 MPH</div>
+    <section class="card">
+      <h2>Now playing</h2>
+      <div class="now">
+        <div class="art-slot">
+          <img id="npArt" alt="" hidden>
+          <span id="npArtMark" aria-hidden="true">♪</span>
+        </div>
+        <div>
+          <p id="npTitle">Sign in to Spotify</p>
+          <p id="npArtist">It scrolls across the backpack.</p>
+          <p id="npStatus"></p>
+        </div>
+      </div>
+      <div class="row">
+        <button id="spotifyBtn" class="btn" type="button">Sign in with Spotify</button>
+        <button id="followBtn" class="btn btn-ghost" type="button" hidden>Follow Spotify</button>
+      </div>
+      <label class="field" for="trackInput">Or type a line</label>
+      <input type="text" id="trackInput" value="Daft Punk - Technologic" placeholder="Artist - Track" autocomplete="off">
+    </section>
 
-  <button id="connectBtn" class="btn">Connect Backpack (BLE)</button>
-  <button id="testBtn" class="btn btn-blue" disabled>Flash Green</button>
-  <button id="gpsBtn" class="btn" disabled>Start GPS Speedometer</button>
-  <button id="brakeBtn" class="btn" disabled>Brake Light</button>
-  <label id="gifLabel" class="btn btn-blue">Replace Saved GIF
-    <input id="gifFile" type="file" accept="image/gif,.gif">
-  </label>
+    <section class="actions">
+      <button id="connectBtn" class="btn span2">Connect backpack</button>
+      <button id="gpsBtn" class="btn" disabled>GPS speed</button>
+      <button id="brakeBtn" class="btn" disabled>Brake light</button>
+      <button id="testBtn" class="btn btn-blue" disabled>Flash green</button>
+      <label id="gifLabel" class="btn btn-blue is-off">Saved GIF
+        <input id="gifFile" type="file" accept="image/gif,.gif">
+      </label>
+      <button id="brakeTestBtn" class="btn btn-red span2" disabled>Test brake</button>
+    </section>
 
-  <input type="text" id="trackInput" value="Daft Punk - Technologic" placeholder="Track Name">
+    <details>
+      <summary>Activity</summary>
+      <div id="log">Ready to pair with a YS backpack.</div>
+    </details>
+  </main>
 
-  <div id="log">Ready to pair with a YS backpack.</div>
+  <dialog id="settingsDialog">
+    <h3>Host and Spotify</h3>
+    <p>This folder is the whole app. Put it on GitHub Pages, Netlify, or Cloudflare Pages, then open that https address in Bluefy.</p>
+    <ol>
+      <li>Create an app at developer.spotify.com/dashboard.</li>
+      <li>Add the redirect URI below to that app. Copy it exactly.</li>
+      <li>While the Spotify app is in development, add your account under User Management.</li>
+      <li>Paste the Client ID here. Leave the secret out of this page.</li>
+    </ol>
+    <label class="field" for="clientIdInput">Spotify Client ID</label>
+    <input type="text" id="clientIdInput" placeholder="From the Spotify dashboard" autocomplete="off">
+    <label class="field" for="redirectUri">Redirect URI</label>
+    <input type="text" id="redirectUri" readonly>
+    <div class="row">
+      <button id="copyUri" class="btn btn-ghost" type="button">Copy URI</button>
+      <button id="saveSettings" class="btn" type="button">Save</button>
+    </div>
+    <div class="row">
+      <button id="closeSettings" class="btn btn-ghost" type="button">Close</button>
+    </div>
+  </dialog>
 
   <script src="yskj.js?v=3"></script>
+  <script src="spotify.js?v=1"></script>
   <script>
     const SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
     const WRITE_UUID = '0000fff2-0000-1000-8000-00805f9b34fb';
@@ -171,6 +393,13 @@
       'X': [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
       'Y': [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
       'Z': [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
+      '&': [0b01100, 0b10010, 0b10100, 0b01000, 0b10101, 0b10010, 0b01101],
+      '+': [0, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0],
+      '/': [0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000],
+      ',': [0, 0, 0, 0, 0, 0b00100, 0b01000],
+      ':': [0, 0b00100, 0b00100, 0, 0b00100, 0b00100, 0],
+      '(': [0b00010, 0b00100, 0b01000, 0b01000, 0b01000, 0b00100, 0b00010],
+      ')': [0b01000, 0b00100, 0b00010, 0b00010, 0b00010, 0b00100, 0b01000],
     };
 
     const canvas = document.getElementById('matrix');
@@ -181,6 +410,7 @@
     const testBtn = document.getElementById('testBtn');
     const gpsBtn = document.getElementById('gpsBtn');
     const brakeBtn = document.getElementById('brakeBtn');
+    const brakeTestBtn = document.getElementById('brakeTestBtn');
     const gifLabel = document.getElementById('gifLabel');
     const gifFile = document.getElementById('gifFile');
     const trackInput = document.getElementById('trackInput');
@@ -248,6 +478,12 @@
     }
 
     function drawHUD() {
+      if (brakeActive()) {
+        const bright = Math.floor(Date.now() / 220) % 2 === 0;
+        ctx.fillStyle = bright ? '#ff0000' : '#0c0000';
+        ctx.fillRect(0, 0, 64, 64);
+        return;
+      }
       const speed = String(Math.min(999, Math.round(currentSpeed)));
       const title = (trackInput.value || 'READY').toUpperCase();
       ctx.fillStyle = '#000';
@@ -346,6 +582,11 @@
       setBraking(true);
     }
 
+    function brakeActive() {
+      if (braking && Date.now() >= brakeUntil) setBraking(false);
+      return braking;
+    }
+
     function noteBrake(mph) {
       if (mph >= 5) recentFastAt = Date.now();
       const detected = brakingFromTrail(speedTrail, mph, Date.now(), braking);
@@ -431,14 +672,13 @@
     }
 
     function paintBrakeBtn() {
-      brakeBtn.textContent = wantBrake ? 'Brake Light On' : 'Brake Light';
+      brakeBtn.textContent = wantBrake ? 'Brake on' : 'Brake light';
       brakeBtn.classList.toggle('btn-red', wantBrake);
     }
 
     async function pushFrame(token) {
       if (!writeChar || mirrorToken !== token) return;
-      if (braking && Date.now() >= brakeUntil) setBraking(false);
-      if (braking) {
+      if (brakeActive()) {
         const bright = Math.floor(Date.now() / 220) % 2 === 0;
         const red = bright ? 255 : 12;
         await writeRaw(YSKJ.aa55(YSKJ.fillRect(0, 0, 63, 63, red, 0, 0)));
@@ -550,14 +790,21 @@
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && writeChar && wakeLock) holdScreen();
+      if (document.visibilityState === 'visible') refreshSpotify();
     });
 
     function setLinked(on) {
       testBtn.disabled = !on;
       gpsBtn.disabled = !on;
       brakeBtn.disabled = !on;
-      gifLabel.style.pointerEvents = on ? 'auto' : 'none';
-      gifLabel.style.opacity = on ? '1' : '0.45';
+      brakeTestBtn.disabled = !on;
+      gifLabel.classList.toggle('is-off', !on);
+      const pill = document.getElementById('linkPill');
+      if (pill) {
+        pill.textContent = on ? 'Live' : 'Off';
+        pill.classList.toggle('on', on);
+      }
+      if (!on) document.getElementById('deviceName').textContent = 'Backpack';
     }
 
     setLinked(false);
@@ -565,6 +812,11 @@
     testBtn.addEventListener('click', () => {
       solidUntil = Date.now() + 1200;
       print('Flashing the panel green.');
+    });
+
+    brakeTestBtn.addEventListener('click', () => {
+      holdBrake();
+      print('Testing the brake light.');
     });
 
     connectBtn.addEventListener('click', async () => {
@@ -590,6 +842,7 @@
           filters: [{ namePrefix: 'YS' }],
           optionalServices: [SERVICE_UUID],
         });
+        document.getElementById('deviceName').textContent = bleDevice.name || 'Backpack';
         print('Found ' + bleDevice.name + '. Connecting...');
         const server = await bleDevice.gatt.connect();
         bleDevice.addEventListener('gattserverdisconnected', () => {
@@ -600,7 +853,7 @@
           releasing = false;
           letScreenSleep();
           connectBtn.disabled = false;
-          connectBtn.textContent = 'Connect Backpack (BLE)';
+          connectBtn.textContent = 'Connect backpack';
           connectBtn.classList.remove('btn-red');
           setLinked(false);
           print('Disconnected.');
@@ -640,13 +893,13 @@
       if (wantHudSpeed) {
         print('Starting GPS...');
         ensureGeo();
-        gpsBtn.textContent = 'Stop GPS Speedometer';
+        gpsBtn.textContent = 'GPS on';
         print('GPS tracking active.');
         return;
       }
       currentSpeed = 0;
       stopGeoIfIdle();
-      gpsBtn.textContent = 'Start GPS Speedometer';
+      gpsBtn.textContent = 'GPS speed';
       print('GPS stopped.');
     });
 
@@ -737,6 +990,166 @@
         }
       }
     });
+
+    let followSpotify = true;
+    let writingTrack = false;
+    let spotifyTimer = 0;
+    let lastSpotifyLine = '';
+
+    function applyTrackLine(text) {
+      if (trackInput.value === text) return;
+      writingTrack = true;
+      trackInput.value = text;
+      writingTrack = false;
+      scrollPos = 0;
+    }
+
+    function paintSpotifyCard(track, status) {
+      const art = document.getElementById('npArt');
+      const title = document.getElementById('npTitle');
+      const artist = document.getElementById('npArtist');
+      const note = document.getElementById('npStatus');
+      const signedIn = SpotifyNow.connected();
+      document.getElementById('spotifyBtn').textContent = signedIn ? 'Sign out' : 'Sign in with Spotify';
+      document.getElementById('followBtn').hidden = !signedIn || followSpotify;
+      if (track && track.title) {
+        title.textContent = track.title;
+        artist.textContent = track.artist || (track.playing ? '' : 'Paused');
+        if (track.art) {
+          art.src = track.art;
+          art.hidden = false;
+        } else {
+          art.hidden = true;
+        }
+      } else if (!followSpotify && signedIn) {
+        title.textContent = trackInput.value || 'Typed line';
+        artist.textContent = 'Shown until you tap Follow Spotify.';
+        art.hidden = true;
+      } else if (!signedIn) {
+        title.textContent = 'Sign in to Spotify';
+        artist.textContent = 'It scrolls across the backpack.';
+        art.hidden = true;
+      } else if (!track) {
+        title.textContent = 'Nothing playing';
+        artist.textContent = 'Start a song in Spotify.';
+        art.hidden = true;
+      }
+      note.textContent = status || '';
+    }
+
+    async function refreshSpotify() {
+      if (!SpotifyNow.connected() || !followSpotify) return;
+      try {
+        const track = await SpotifyNow.currentlyPlaying();
+        if (track === undefined) return;
+        paintSpotifyCard(track, track && track.playing === false ? 'Paused in Spotify.' : '');
+        if (track && track.line) {
+          if (track.line !== lastSpotifyLine) {
+            lastSpotifyLine = track.line;
+            applyTrackLine(track.line);
+          }
+        }
+      } catch (e) {
+        paintSpotifyCard(null, e.message);
+      }
+    }
+
+    function openSettings() {
+      const dialog = document.getElementById('settingsDialog');
+      document.getElementById('clientIdInput').value = SpotifyNow.clientId();
+      document.getElementById('redirectUri').value = SpotifyNow.redirectUri();
+      try {
+        if (typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
+        else dialog.setAttribute('open', '');
+      } catch (e) {
+        dialog.setAttribute('open', '');
+      }
+    }
+
+    function closeSettings() {
+      const dialog = document.getElementById('settingsDialog');
+      if (typeof dialog.close === 'function' && dialog.open) dialog.close();
+      else dialog.removeAttribute('open');
+    }
+
+    trackInput.addEventListener('input', () => {
+      if (writingTrack) return;
+      followSpotify = false;
+      scrollPos = 0;
+      paintSpotifyCard(null, SpotifyNow.connected() ? 'Using the line you typed.' : '');
+    });
+
+    document.getElementById('followBtn').addEventListener('click', () => {
+      followSpotify = true;
+      lastSpotifyLine = '';
+      document.getElementById('followBtn').hidden = true;
+      document.getElementById('npStatus').textContent = 'Checking Spotify...';
+      refreshSpotify();
+    });
+
+    document.getElementById('settingsBtn').addEventListener('click', openSettings);
+    document.getElementById('closeSettings').addEventListener('click', closeSettings);
+    document.getElementById('saveSettings').addEventListener('click', () => {
+      SpotifyNow.setClientId(document.getElementById('clientIdInput').value);
+      print('Saved the Spotify Client ID.');
+      closeSettings();
+    });
+    document.getElementById('copyUri').addEventListener('click', async () => {
+      const uri = document.getElementById('redirectUri');
+      uri.focus();
+      uri.select();
+      try {
+        await navigator.clipboard.writeText(uri.value);
+        print('Copied the redirect URI.');
+      } catch (e) {
+        print('Select the redirect URI and copy it.');
+      }
+    });
+
+    document.getElementById('spotifyBtn').addEventListener('click', async () => {
+      if (SpotifyNow.connected()) {
+        SpotifyNow.logout();
+        followSpotify = true;
+        lastSpotifyLine = '';
+        paintSpotifyCard(null, '');
+        print('Signed out of Spotify.');
+        return;
+      }
+      if (!SpotifyNow.clientId()) {
+        openSettings();
+        print('Add a Spotify Client ID first.');
+        return;
+      }
+      try {
+        await SpotifyNow.beginLogin();
+      } catch (e) {
+        print(e.message);
+      }
+    });
+
+    async function startSpotify() {
+      try {
+        const arrived = await SpotifyNow.finishLogin();
+        if (arrived) print('Signed in to Spotify.');
+      } catch (e) {
+        print(e.message);
+      }
+      if (SpotifyNow.connected()) {
+        try {
+          const name = await SpotifyNow.profileName();
+          if (name) print('Spotify account ' + name + '.');
+        } catch (e) {
+          // The next poll will say if the sign-in expired.
+        }
+        followSpotify = true;
+        refreshSpotify();
+        spotifyTimer = setInterval(refreshSpotify, 4000);
+      } else {
+        paintSpotifyCard(null, '');
+      }
+    }
+
+    startSpotify();
   </script>
 </body>
 </html>
