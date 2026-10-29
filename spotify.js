@@ -134,6 +134,22 @@ const SpotifyNow = (() => {
     return { line, title, artist, art, playing: !!body.is_playing };
   }
 
+  function errorFromBody(text, status) {
+    let message = '';
+    try {
+      const payload = JSON.parse(text);
+      if (payload && typeof payload.error === 'string') message = payload.error_description || payload.error;
+      else if (payload && payload.error && payload.error.message) message = payload.error.message;
+    } catch (e) {
+      message = (text || '').trim();
+    }
+    if (/not be registered/i.test(message)) {
+      message = 'Add this Spotify account under User Management in the developer dashboard, then sign in again.';
+    }
+    if (!message) message = 'Spotify returned ' + status + '.';
+    return new Error(message);
+  }
+
   async function apiGet(path) {
     const headers = { Authorization: 'Bearer ' + await accessToken() };
     const response = await fetch('https://api.spotify.com/v1' + path, { headers });
@@ -163,11 +179,16 @@ const SpotifyNow = (() => {
         continue;
       }
       if (response.status === 204) continue;
-      const payload = await response.json().catch(() => ({}));
+      const text = await response.text().catch(() => '');
       if (!response.ok) {
-        const message = (payload.error && payload.error.message) || 'Spotify did not share what is playing.';
-        lastError = new Error(message);
+        lastError = errorFromBody(text, response.status);
         continue;
+      }
+      let payload = {};
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch (e) {
+        payload = {};
       }
       if (payload.device && payload.device.is_private_session) privateSession = true;
       const item = payload.item || payload.currently_playing;
