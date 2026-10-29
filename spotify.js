@@ -16,7 +16,7 @@ const SpotifyNow = (() => {
   }
 
   function connected() {
-    return !!localStorage.getItem('spotifyRefresh');
+    return !!(localStorage.getItem('spotifyRefresh') || localStorage.getItem('spotifyAccess'));
   }
 
   function logout() {
@@ -45,6 +45,8 @@ const SpotifyNow = (() => {
     const stateBytes = new Uint8Array(16);
     crypto.getRandomValues(stateBytes);
     const state = base64url(stateBytes);
+    localStorage.setItem('spotifyVerifier', verifier);
+    localStorage.setItem('spotifyState', state);
     sessionStorage.setItem('spotifyVerifier', verifier);
     sessionStorage.setItem('spotifyState', state);
     const url = new URL('https://accounts.spotify.com/authorize');
@@ -85,9 +87,11 @@ const SpotifyNow = (() => {
     const error = params.get('error');
     if (!code && !error) return false;
     const state = params.get('state');
-    const expected = sessionStorage.getItem('spotifyState');
-    const verifier = sessionStorage.getItem('spotifyVerifier');
+    const expected = localStorage.getItem('spotifyState') || sessionStorage.getItem('spotifyState');
+    const verifier = localStorage.getItem('spotifyVerifier') || sessionStorage.getItem('spotifyVerifier');
     history.replaceState({}, '', location.pathname);
+    localStorage.removeItem('spotifyState');
+    localStorage.removeItem('spotifyVerifier');
     sessionStorage.removeItem('spotifyState');
     sessionStorage.removeItem('spotifyVerifier');
     if (error) throw new Error(error === 'access_denied' ? 'Spotify sign-in was cancelled.' : error);
@@ -130,25 +134,50 @@ const SpotifyNow = (() => {
     return { line, title, artist, art, playing: !!body.is_playing };
   }
 
-  async function currentlyPlaying() {
-    const token = await accessToken();
-    const response = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-      headers: { Authorization: 'Bearer ' + token },
+  async function apiGet(path) {
+    const headers = { Authorization: 'Bearer ' + await accessToken() };
+    const response = await fetch('https://api.spotify.com/v1' + path, { headers });
+    if (response.status !== 401) return response;
+    localStorage.removeItem('spotifyAccess');
+    localStorage.setItem('spotifyExpiry', '0');
+    return fetch('https://api.spotify.com/v1' + path, {
+      headers: { Authorization: 'Bearer ' + await accessToken() },
     });
-    if (response.status === 204) return null;
-    if (response.status === 401) {
-      localStorage.removeItem('spotifyAccess');
-      localStorage.setItem('spotifyExpiry', '0');
-      const retry = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-        headers: { Authorization: 'Bearer ' + await accessToken() },
-      });
-      if (retry.status === 204) return null;
-      if (!retry.ok) throw new Error('Spotify did not share what is playing.');
-      return trackLine(await retry.json());
+  }
+
+  // The phone app often answers "nothing playing" on the first endpoint
+  // while a song is actually on. The player state and the queue are the backups.
+  async function currentlyPlaying() {
+    const paths = [
+      '/me/player/currently-playing?additional_types=track,episode',
+      '/me/player?additional_types=track,episode',
+      '/me/player/queue',
+    ];
+    let lastError = null;
+    let privateSession = false;
+    let throttled = false;
+    for (let i = 0; i < paths.length; i++) {
+      const response = await apiGet(paths[i]);
+      if (response.status === 429) {
+        throttled = true;
+        continue;
+      }
+      if (response.status === 204) continue;
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = (payload.error && payload.error.message) || 'Spotify did not share what is playing.';
+        lastError = new Error(message);
+        continue;
+      }
+      if (payload.device && payload.device.is_private_session) privateSession = true;
+      const item = payload.item || payload.currently_playing;
+      const track = trackLine(item ? { item: item, is_playing: payload.is_playing !== false } : null);
+      if (track && track.title) return track;
     }
-    if (response.status === 429) return undefined;
-    if (!response.ok) throw new Error('Spotify did not share what is playing.');
-    return trackLine(await response.json());
+    if (privateSession) throw new Error('Turn off Private Session in Spotify, then leave the song playing.');
+    if (lastError) throw lastError;
+    if (throttled) return undefined;
+    return null;
   }
 
   async function profileName() {

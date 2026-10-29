@@ -329,6 +329,7 @@
       <li>While the Spotify app is in development, add your account under User Management.</li>
       <li>Paste the Client ID here. Leave the secret out of this page.</li>
     </ol>
+    <p>If a song is playing and this page stays empty, turn off Private Session in the Spotify app and leave the song playing.</p>
     <label class="field" for="clientIdInput">Spotify Client ID</label>
     <input type="text" id="clientIdInput" placeholder="From the Spotify dashboard" autocomplete="off">
     <label class="field" for="redirectUri">Redirect URI</label>
@@ -343,7 +344,7 @@
   </dialog>
 
   <script src="yskj.js?v=3"></script>
-  <script src="spotify.js?v=1"></script>
+  <script src="spotify.js?v=2"></script>
   <script>
     const SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
     const WRITE_UUID = '0000fff2-0000-1000-8000-00805f9b34fb';
@@ -995,6 +996,13 @@
     let writingTrack = false;
     let spotifyTimer = 0;
     let lastSpotifyLine = '';
+    let lastSpotifyNote = '';
+
+    function noteSpotify(message) {
+      if (!message || message === lastSpotifyNote) return;
+      lastSpotifyNote = message;
+      print(message);
+    }
 
     function applyTrackLine(text) {
       if (trackInput.value === text) return;
@@ -1027,14 +1035,14 @@
         art.hidden = true;
       } else if (!signedIn) {
         title.textContent = 'Sign in to Spotify';
-        artist.textContent = 'It scrolls across the backpack.';
+        artist.textContent = status || 'It scrolls across the backpack.';
         art.hidden = true;
       } else if (!track) {
-        title.textContent = 'Nothing playing';
-        artist.textContent = 'Start a song in Spotify.';
+        title.textContent = 'Waiting for Spotify';
+        artist.textContent = status || 'Start a song in the Spotify app.';
         art.hidden = true;
       }
-      note.textContent = status || '';
+      note.textContent = track && track.title ? (status || '') : '';
     }
 
     async function refreshSpotify() {
@@ -1042,15 +1050,21 @@
       try {
         const track = await SpotifyNow.currentlyPlaying();
         if (track === undefined) return;
-        paintSpotifyCard(track, track && track.playing === false ? 'Paused in Spotify.' : '');
         if (track && track.line) {
+          lastSpotifyNote = '';
+          paintSpotifyCard(track, track.playing === false ? 'Paused in Spotify.' : '');
           if (track.line !== lastSpotifyLine) {
             lastSpotifyLine = track.line;
             applyTrackLine(track.line);
           }
+          return;
         }
+        const hint = 'Turn off Private Session in Spotify, keep the song playing, and leave this page open.';
+        paintSpotifyCard(null, hint);
+        noteSpotify(hint);
       } catch (e) {
         paintSpotifyCard(null, e.message);
+        noteSpotify(e.message);
       }
     }
 
@@ -1128,10 +1142,12 @@
     });
 
     async function startSpotify() {
+      let signInError = '';
       try {
         const arrived = await SpotifyNow.finishLogin();
         if (arrived) print('Signed in to Spotify.');
       } catch (e) {
+        signInError = e.message;
         print(e.message);
       }
       if (SpotifyNow.connected()) {
@@ -1142,10 +1158,11 @@
           // The next poll will say if the sign-in expired.
         }
         followSpotify = true;
+        paintSpotifyCard(null, 'Looking for the song...');
         refreshSpotify();
         spotifyTimer = setInterval(refreshSpotify, 4000);
       } else {
-        paintSpotifyCard(null, '');
+        paintSpotifyCard(null, signInError);
       }
     }
 
