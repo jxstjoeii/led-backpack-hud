@@ -158,6 +158,28 @@
       overflow: hidden;
     }
     #npStatus:empty { display: none; }
+    .sources {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 12px;
+    }
+    .source {
+      flex: 1;
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 700;
+    }
+    .source.on {
+      color: var(--green-ink);
+      background: var(--green);
+      border-color: var(--green);
+    }
+    [hidden] { display: none !important; }
     .row {
       display: flex;
       gap: 8px;
@@ -250,7 +272,8 @@
       color: var(--text);
     }
     dialog::backdrop { background: rgba(0, 0, 0, 0.62); }
-    dialog h3 { margin: 0 0 8px; }
+    dialog h3 { margin: 16px 0 8px; }
+    dialog h3:first-child { margin-top: 0; }
     dialog p, dialog ol { color: var(--muted); font-size: 0.9rem; }
     dialog ol { padding-left: 1.1rem; }
     .icon-btn {
@@ -284,23 +307,31 @@
 
     <section class="card">
       <h2>Now playing</h2>
+      <div class="sources" role="tablist" aria-label="Song source">
+        <button id="sourceSpotify" class="source on" type="button" aria-pressed="true">Spotify</button>
+        <button id="sourceLastfm" class="source" type="button" aria-pressed="false">Last.fm</button>
+      </div>
       <div class="now">
         <div class="art-slot">
           <img id="npArt" alt="" hidden>
           <span id="npArtMark" aria-hidden="true">♪</span>
         </div>
         <div>
-          <p id="npTitle">Sign in to Spotify</p>
-          <p id="npArtist">It scrolls across the backpack.</p>
+          <p id="npTitle">CONNECT SPOTIFY</p>
+          <p id="npArtist">Sign in with Spotify.</p>
           <p id="npStatus"></p>
         </div>
       </div>
-      <div class="row">
+      <div class="row" id="spotifyActions">
         <button id="spotifyBtn" class="btn" type="button">Sign in with Spotify</button>
         <button id="followBtn" class="btn btn-ghost" type="button" hidden>Follow Spotify</button>
       </div>
+      <div class="row" id="lastfmActions" hidden>
+        <button id="lastfmBtn" class="btn" type="button">Add Last.fm in Setup</button>
+        <button id="lastfmFollowBtn" class="btn btn-ghost" type="button" hidden>Follow Last.fm</button>
+      </div>
       <label class="field" for="trackInput">Or type a line</label>
-      <input type="text" id="trackInput" value="Daft Punk - Technologic" placeholder="Artist - Track" autocomplete="off">
+      <input type="text" id="trackInput" value="CONNECT SPOTIFY" placeholder="Artist - Track" autocomplete="off">
     </section>
 
     <section class="actions">
@@ -321,7 +352,7 @@
   </main>
 
   <dialog id="settingsDialog">
-    <h3>Host and Spotify</h3>
+    <h3>Setup</h3>
     <p>This folder is the whole app. Put it on GitHub Pages, Netlify, or Cloudflare Pages, then open that https address in Bluefy.</p>
     <ol>
       <li>Create an app at developer.spotify.com/dashboard.</li>
@@ -334,6 +365,12 @@
     <input type="text" id="clientIdInput" placeholder="From the Spotify dashboard" autocomplete="off">
     <label class="field" for="redirectUri">Redirect URI</label>
     <input type="text" id="redirectUri" readonly>
+    <h3>Last.fm</h3>
+    <p>Last.fm can show the song without Spotify Premium. Create a free account, then in Last.fm open Settings, Applications, and connect Spotify Scrobbling. Turn Private Session off in Spotify. Create an API key at last.fm/api/account/create.</p>
+    <label class="field" for="lastfmUserInput">Last.fm username</label>
+    <input type="text" id="lastfmUserInput" placeholder="Your Last.fm username" autocomplete="off">
+    <label class="field" for="lastfmKeyInput">Last.fm API key</label>
+    <input type="text" id="lastfmKeyInput" placeholder="From the Last.fm API page" autocomplete="off">
     <div class="row">
       <button id="copyUri" class="btn btn-ghost" type="button">Copy URI</button>
       <button id="saveSettings" class="btn" type="button">Save</button>
@@ -345,6 +382,7 @@
 
   <script src="yskj.js?v=3"></script>
   <script src="spotify.js?v=3"></script>
+  <script src="lastfm.js?v=1"></script>
   <script>
     const SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb';
     const WRITE_UUID = '0000fff2-0000-1000-8000-00805f9b34fb';
@@ -791,7 +829,7 @@
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && writeChar && wakeLock) holdScreen();
-      if (document.visibilityState === 'visible') refreshSpotify();
+      if (document.visibilityState === 'visible') refreshNow();
     });
 
     function setLinked(on) {
@@ -992,15 +1030,20 @@
       }
     });
 
-    let followSpotify = true;
+    let followLive = true;
     let writingTrack = false;
-    let spotifyTimer = 0;
-    let lastSpotifyLine = '';
-    let lastSpotifyNote = '';
+    let pollTimer = 0;
+    let refreshGen = 0;
+    let lastLine = '';
+    let lastNote = '';
 
-    function noteSpotify(message) {
-      if (!message || message === lastSpotifyNote) return;
-      lastSpotifyNote = message;
+    function nowSource() {
+      return localStorage.getItem('nowSource') === 'lastfm' ? 'lastfm' : 'spotify';
+    }
+
+    function note(message) {
+      if (!message || message === lastNote) return;
+      lastNote = message;
       print(message);
     }
 
@@ -1012,14 +1055,26 @@
       scrollPos = 0;
     }
 
-    function paintSpotifyCard(track, status) {
+    function paintCard(track, status) {
       const art = document.getElementById('npArt');
       const title = document.getElementById('npTitle');
       const artist = document.getElementById('npArtist');
-      const note = document.getElementById('npStatus');
+      const noteEl = document.getElementById('npStatus');
+      const source = nowSource();
+      const spotifyOn = source === 'spotify';
       const signedIn = SpotifyNow.connected();
+      const lastfmReady = LastFmNow.configured();
+      document.getElementById('sourceSpotify').classList.toggle('on', spotifyOn);
+      document.getElementById('sourceLastfm').classList.toggle('on', !spotifyOn);
+      document.getElementById('sourceSpotify').setAttribute('aria-pressed', spotifyOn ? 'true' : 'false');
+      document.getElementById('sourceLastfm').setAttribute('aria-pressed', spotifyOn ? 'false' : 'true');
+      document.getElementById('spotifyActions').hidden = !spotifyOn;
+      document.getElementById('lastfmActions').hidden = spotifyOn || (lastfmReady && followLive);
       document.getElementById('spotifyBtn').textContent = signedIn ? 'Sign out' : 'Sign in with Spotify';
-      document.getElementById('followBtn').hidden = !signedIn || followSpotify;
+      document.getElementById('followBtn').hidden = followLive;
+      document.getElementById('lastfmBtn').hidden = lastfmReady;
+      document.getElementById('lastfmFollowBtn').hidden = !lastfmReady || followLive;
+
       if (track && track.title) {
         title.textContent = track.title;
         artist.textContent = track.artist || (track.playing ? '' : 'Paused');
@@ -1029,49 +1084,127 @@
         } else {
           art.hidden = true;
         }
-      } else if (!followSpotify && signedIn) {
+        noteEl.textContent = status || '';
+        return;
+      }
+
+      art.hidden = true;
+      noteEl.textContent = '';
+      if (!followLive) {
         title.textContent = trackInput.value || 'Typed line';
-        artist.textContent = 'Shown until you tap Follow Spotify.';
-        art.hidden = true;
-      } else if (!signedIn) {
-        title.textContent = 'Sign in to Spotify';
-        artist.textContent = status || 'It scrolls across the backpack.';
-        art.hidden = true;
-      } else if (!track) {
+        artist.textContent = spotifyOn
+          ? 'Shown until you tap Follow Spotify.'
+          : 'Shown until you tap Follow Last.fm.';
+        return;
+      }
+      if (spotifyOn) {
+        if (!signedIn) {
+          applyTrackLine('CONNECT SPOTIFY');
+          lastLine = 'CONNECT SPOTIFY';
+          title.textContent = 'CONNECT SPOTIFY';
+          artist.textContent = status || 'Sign in with Spotify.';
+          return;
+        }
+        if (trackInput.value === 'CONNECT SPOTIFY') {
+          applyTrackLine('');
+          lastLine = '';
+        }
         title.textContent = 'Waiting for Spotify';
         artist.textContent = status || 'Start a song in the Spotify app.';
-        art.hidden = true;
+        return;
       }
-      note.textContent = track && track.title ? (status || '') : '';
+      if (trackInput.value === 'CONNECT SPOTIFY') {
+        applyTrackLine('');
+        lastLine = '';
+      }
+      if (!lastfmReady) {
+        title.textContent = 'Add Last.fm in Setup';
+        artist.textContent = status || 'Username and API key, then connect Spotify inside Last.fm.';
+        return;
+      }
+      title.textContent = 'Waiting for Last.fm';
+      artist.textContent = status || 'Start a song. It can take a few seconds.';
     }
 
-    async function refreshSpotify() {
-      if (!SpotifyNow.connected() || !followSpotify) return;
+    async function refreshSpotify(gen) {
+      if (nowSource() !== 'spotify') return;
+      if (!followLive || !SpotifyNow.connected()) {
+        if (gen === refreshGen) paintCard(null, '');
+        return;
+      }
       try {
         const track = await SpotifyNow.currentlyPlaying();
+        if (gen !== refreshGen || nowSource() !== 'spotify' || !followLive) return;
         if (track === undefined) return;
         if (track && track.line) {
-          lastSpotifyNote = '';
-          paintSpotifyCard(track, track.playing === false ? 'Paused in Spotify.' : '');
-          if (track.line !== lastSpotifyLine) {
-            lastSpotifyLine = track.line;
+          lastNote = '';
+          paintCard(track, track.playing === false ? 'Paused in Spotify.' : '');
+          if (track.line !== lastLine) {
+            lastLine = track.line;
             applyTrackLine(track.line);
           }
           return;
         }
         const hint = 'Turn off Private Session in Spotify, keep the song playing, and leave this page open.';
-        paintSpotifyCard(null, hint);
-        noteSpotify(hint);
+        paintCard(null, hint);
+        note(hint);
       } catch (e) {
-        paintSpotifyCard(null, e.message);
-        noteSpotify(e.message);
+        if (gen !== refreshGen || nowSource() !== 'spotify' || !followLive) return;
+        paintCard(null, e.message);
+        note(e.message);
       }
+    }
+
+    async function refreshLastfm(gen) {
+      if (nowSource() !== 'lastfm') return;
+      if (!followLive || !LastFmNow.configured()) {
+        if (gen === refreshGen) paintCard(null, '');
+        return;
+      }
+      try {
+        const track = await LastFmNow.currentlyPlaying();
+        if (gen !== refreshGen || nowSource() !== 'lastfm' || !followLive) return;
+        if (track === undefined) return;
+        if (track && track.line) {
+          lastNote = '';
+          paintCard(track, '');
+          if (track.line !== lastLine) {
+            lastLine = track.line;
+            applyTrackLine(track.line);
+          }
+          return;
+        }
+        paintCard(null, 'Start a song in Spotify. Last.fm can take a few seconds to catch it.');
+      } catch (e) {
+        if (gen !== refreshGen || nowSource() !== 'lastfm' || !followLive) return;
+        paintCard(null, e.message);
+        note(e.message);
+      }
+    }
+
+    function refreshNow() {
+      const gen = ++refreshGen;
+      if (nowSource() === 'lastfm') return refreshLastfm(gen);
+      return refreshSpotify(gen);
+    }
+
+    function selectSource(source) {
+      const next = source === 'lastfm' ? 'lastfm' : 'spotify';
+      if (nowSource() !== next) {
+        localStorage.setItem('nowSource', next);
+        lastLine = '';
+        lastNote = '';
+        print(next === 'lastfm' ? 'Using Last.fm.' : 'Using Spotify.');
+      }
+      refreshNow();
     }
 
     function openSettings() {
       const dialog = document.getElementById('settingsDialog');
       document.getElementById('clientIdInput').value = SpotifyNow.clientId();
       document.getElementById('redirectUri').value = SpotifyNow.redirectUri();
+      document.getElementById('lastfmUserInput').value = LastFmNow.user();
+      document.getElementById('lastfmKeyInput').value = LastFmNow.apiKey();
       try {
         if (typeof dialog.showModal === 'function' && !dialog.open) dialog.showModal();
         else dialog.setAttribute('open', '');
@@ -1088,25 +1221,42 @@
 
     trackInput.addEventListener('input', () => {
       if (writingTrack) return;
-      followSpotify = false;
+      followLive = false;
       scrollPos = 0;
-      paintSpotifyCard(null, SpotifyNow.connected() ? 'Using the line you typed.' : '');
+      lastLine = '';
+      paintCard(null, '');
     });
 
     document.getElementById('followBtn').addEventListener('click', () => {
-      followSpotify = true;
-      lastSpotifyLine = '';
-      document.getElementById('followBtn').hidden = true;
-      document.getElementById('npStatus').textContent = 'Checking Spotify...';
-      refreshSpotify();
+      followLive = true;
+      lastLine = '';
+      lastNote = '';
+      if (SpotifyNow.connected()) document.getElementById('npStatus').textContent = 'Checking Spotify...';
+      refreshNow();
     });
+
+    document.getElementById('lastfmFollowBtn').addEventListener('click', () => {
+      followLive = true;
+      lastLine = '';
+      lastNote = '';
+      refreshNow();
+    });
+
+    document.getElementById('sourceSpotify').addEventListener('click', () => selectSource('spotify'));
+    document.getElementById('sourceLastfm').addEventListener('click', () => selectSource('lastfm'));
+    document.getElementById('lastfmBtn').addEventListener('click', openSettings);
 
     document.getElementById('settingsBtn').addEventListener('click', openSettings);
     document.getElementById('closeSettings').addEventListener('click', closeSettings);
     document.getElementById('saveSettings').addEventListener('click', () => {
       SpotifyNow.setClientId(document.getElementById('clientIdInput').value);
-      print('Saved the Spotify Client ID.');
+      LastFmNow.setAccount(
+        document.getElementById('lastfmUserInput').value,
+        document.getElementById('lastfmKeyInput').value
+      );
+      print('Saved.');
       closeSettings();
+      refreshNow();
     });
     document.getElementById('copyUri').addEventListener('click', async () => {
       const uri = document.getElementById('redirectUri');
@@ -1123,10 +1273,11 @@
     document.getElementById('spotifyBtn').addEventListener('click', async () => {
       if (SpotifyNow.connected()) {
         SpotifyNow.logout();
-        followSpotify = true;
-        lastSpotifyLine = '';
-        paintSpotifyCard(null, '');
+        followLive = true;
+        lastLine = '';
+        lastNote = '';
         print('Signed out of Spotify.');
+        refreshNow();
         return;
       }
       if (!SpotifyNow.clientId()) {
@@ -1141,11 +1292,14 @@
       }
     });
 
-    async function startSpotify() {
+    async function startNow() {
       let signInError = '';
       try {
         const arrived = await SpotifyNow.finishLogin();
-        if (arrived) print('Signed in to Spotify.');
+        if (arrived) {
+          print('Signed in to Spotify.');
+          followLive = true;
+        }
       } catch (e) {
         signInError = e.message;
         print(e.message);
@@ -1157,16 +1311,14 @@
         } catch (e) {
           // The next poll will say if the sign-in expired.
         }
-        followSpotify = true;
-        paintSpotifyCard(null, 'Looking for the song...');
-        refreshSpotify();
-        spotifyTimer = setInterval(refreshSpotify, 4000);
-      } else {
-        paintSpotifyCard(null, signInError);
+        if (nowSource() === 'spotify' && followLive) paintCard(null, 'Looking for the song...');
       }
+      await refreshNow();
+      if (signInError && nowSource() === 'spotify' && !SpotifyNow.connected()) paintCard(null, signInError);
+      if (!pollTimer) pollTimer = setInterval(refreshNow, 4000);
     }
 
-    startSpotify();
+    startNow();
   </script>
 </body>
 </html>
