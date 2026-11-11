@@ -23,6 +23,10 @@ The folder is a static site. GitHub Pages, Netlify, and Cloudflare Pages can hos
 
 The live mirror uses the same exclusive-draw command as Nyan Gear. On connect the page asks which program is playing, sends draw-begin (tag `30`, value `90`), and wipes the matrix to black. The saved clip stops compositing, and the HUD is drawn on that black. Disconnect sends draw-commit (value `65`) and plays that program again. A dim fill does not hide the clip, because the stored animation keeps drawing until draw-begin.
 
+## Running without the phone
+
+[PARTS.md](PARTS.md) lists the hardware for a standalone build: an ESP32-S3 controller with its own GPS, motion sensor, and battery, talking to the stock panel over the same Bluetooth protocol.
+
 ## Protocol
 
 Service `0000fff0-…`, write `0000fff2-…` (no response), notify `0000fff1-…`. The backpack negotiates a large MTU. Packets are built in `yskj.js`.
